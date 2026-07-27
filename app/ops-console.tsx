@@ -243,8 +243,8 @@ export function OpsConsole() {
   }, [toast]);
 
   useEffect(() => {
-    const client = supabase;
-    if (!client) return;
+    if (!supabase) return;
+    const portalClient = supabase;
 
     async function loadPortal(nextSession: Session | null) {
       setSession(nextSession);
@@ -255,16 +255,16 @@ export function OpsConsole() {
       }
 
       const [{ data: profileData }, { data: clientData }] = await Promise.all([
-        client.from("profiles").select("*").eq("id", nextSession.user.id).single(),
-        client.from("clients").select("id, company_name, primary_email").eq("active", true).order("company_name"),
+        portalClient.from("profiles").select("*").eq("id", nextSession.user.id).single(),
+        portalClient.from("clients").select("id, company_name, primary_email").eq("active", true).order("company_name"),
       ]);
       setProfile((profileData as PortalProfile | null) ?? null);
       setClients((clientData as ClientOption[] | null) ?? []);
       setAuthReady(true);
     }
 
-    client.auth.getSession().then(({ data }) => loadPortal(data.session));
-    const { data: listener } = client.auth.onAuthStateChange((_event, nextSession) => {
+    portalClient.auth.getSession().then(({ data }) => loadPortal(data.session));
+    const { data: listener } = portalClient.auth.onAuthStateChange((_event, nextSession) => {
       loadPortal(nextSession);
     });
     return () => listener.subscription.unsubscribe();
@@ -274,6 +274,7 @@ export function OpsConsole() {
     if (!supabase || !session || !selectedClient?.id || role === "admin") {
       return;
     }
+    const selectedClientId = selectedClient.id;
     let active = true;
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 29);
@@ -282,7 +283,7 @@ export function OpsConsole() {
       const { data, error } = await supabase
         .from("reports")
         .select("id, vertical_id, report_date, version, published_at, report_metrics(metric_key, metric_label, numeric_value, text_value), report_rows(id, row_type, person_name, data, source_row)")
-        .eq("client_id", selectedClient.id)
+        .eq("client_id", selectedClientId)
         .eq("status", "published")
         .gte("report_date", startDate.toISOString().slice(0, 10))
         .order("report_date", { ascending: false })
