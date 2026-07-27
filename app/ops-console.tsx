@@ -8,6 +8,11 @@ import {
   type PortalProfile,
   supabase,
 } from "../lib/supabase-browser";
+import {
+  extractReportFromFile,
+  type ExtractedReportMetric,
+  type ExtractedReportRow,
+} from "../lib/report-extraction";
 
 type Role = "admin" | "employee" | "client";
 type Page = "overview" | "recruiting" | "orientation" | "training" | "time";
@@ -19,6 +24,35 @@ type UploadPreview = {
   reportId?: string;
   clientName: string;
   verticalName: string;
+  verticalId: string;
+  reportDate: string;
+  metrics: ExtractedReportMetric[];
+  rows: ExtractedReportRow[];
+  published: boolean;
+};
+type ReportMetric = [string, number];
+type AdminUser = { name: string; email: string; role: string; assignment: string };
+type SavedMetric = {
+  metric_key: string;
+  metric_label: string;
+  numeric_value: number | string | null;
+  text_value: string | null;
+};
+type SavedRow = {
+  id: string;
+  row_type: string;
+  person_name: string | null;
+  data: Record<string, string | number | boolean | null>;
+  source_row: number | null;
+};
+type PublishedReport = {
+  id: string;
+  vertical_id: string;
+  report_date: string;
+  version: number;
+  published_at: string | null;
+  report_metrics: SavedMetric[];
+  report_rows: SavedRow[];
 };
 
 const verticalTemplateMeta: Record<string, { filename: string; summary: string }> = {
@@ -47,12 +81,6 @@ const verticalOptions = [
   { id: "00000000-0000-4000-8000-000000000104", key: "time" as Page, name: "Time & Attendance" },
 ];
 
-const demoClients: ClientOption[] = [
-  { id: "10000000-0000-4000-8000-000000000001", company_name: "Northstar Delivery", primary_email: "operations@northstar.example.test" },
-  { id: "10000000-0000-4000-8000-000000000002", company_name: "Evergreen Logistics", primary_email: "reports@evergreen.example.test" },
-  { id: "10000000-0000-4000-8000-000000000003", company_name: "Summit Route Partners", primary_email: "admin@summitroute.example.test" },
-];
-
 const navItems: { id: Page; short: string; label: string }[] = [
   { id: "overview", short: "OV", label: "Overview" },
   { id: "recruiting", short: "SH", label: "Sourcing & Hiring" },
@@ -61,61 +89,27 @@ const navItems: { id: Page; short: string; label: string }[] = [
   { id: "time", short: "TA", label: "Time & Attendance" },
 ];
 
-const verticalCards = [
-  { id: "recruiting" as Page, num: "01", title: "Sourcing & Hiring", today: 62, month: 468, status: "Updated", tone: "ok" },
-  { id: "orientation" as Page, num: "02", title: "Orientation & ADP Setup", today: 24, month: 183, status: "Updated", tone: "ok" },
-  { id: "training" as Page, num: "03", title: "Training, ORE & Work Scheduling", today: 17, month: 126, status: "Updated", tone: "ok" },
-  { id: "time" as Page, num: "04", title: "Time & Attendance", today: 19, month: 141, status: "3 to review", tone: "review" },
-];
-
-const chartA = [48, 57, 42, 65, 78, 51, 43, 68, 82, 74, 61, 88, 72, 91];
-const chartB = [22, 29, 18, 33, 26, 37, 24, 35, 40, 31, 45, 38, 49, 43];
-
-const reportConfig = {
+const reportConfig: Record<"recruiting" | "orientation" | "training", {
+  title: string;
+  subtitle: string;
+  emptyMetrics: ReportMetric[];
+}> = {
   recruiting: {
     title: "Sourcing & Hiring",
     subtitle: "Candidate movement from initial contact through Amazon portal readiness.",
-    metrics: [["Contacted from Indeed", 186], ["Reviewed applicants", 70], ["In-person interview", 68], ["Added to Amazon portal", 7], ["Drug tests ordered", 8]],
-    rows: [
-      ["Dominic Allen", "dominic.allen@example.test", "Amazon Portal", "Jul 25, 2026", "Karen Lee"],
-      ["Robert Lipinski", "robert.lipinski@example.test", "Ready for offer", "Jul 25, 2026", "Karen Lee"],
-      ["Ryan Harrison", "ryan.harrison@example.test", "Drug test pending", "Jul 24, 2026", "Karen Lee"],
-      ["Glenn Washington", "glenn.w@example.test", "Background check", "Jul 24, 2026", "Karen Lee"],
-      ["Chris Durham", "chris.durham@example.test", "Offer letter", "Jul 23, 2026", "Karen Lee"],
-    ],
+    emptyMetrics: [["Contacted from Indeed", 0], ["Reviewed applicants", 0], ["In-person interview", 0], ["Added to Amazon portal", 0], ["Drug tests ordered", 0]],
   },
   orientation: {
     title: "Orientation & ADP Setup",
     subtitle: "Onboarding documents, offer letters, and payroll readiness.",
-    metrics: [["Payroll data collection", 10], ["ID collection", 16], ["Moved to offer letter", 8], ["Ready for ADP", 2], ["Completed this month", 43]],
-    rows: [
-      ["Houssem Mamri", "DL + I-9 complete", "Ready for ADP", "Jul 25, 2026", "Mia Chen"],
-      ["Myloick Watson", "Offer signed", "ADP setup", "Jul 25, 2026", "Mia Chen"],
-      ["Tymeer Harris", "I-9 complete", "Offer letter", "Jul 24, 2026", "Mia Chen"],
-      ["Zachary Vega", "DL received", "ID collection", "Jul 24, 2026", "Mia Chen"],
-      ["Justin Fleming", "Payroll form received", "Data collection", "Jul 23, 2026", "Mia Chen"],
-    ],
+    emptyMetrics: [["Payroll data collection", 0], ["ID collection", 0], ["Moved to offer letter", 0], ["Ready for ADP", 0]],
   },
   training: {
     title: "Training, ORE & Work Scheduling",
     subtitle: "Training readiness, reschedules, and first work deployment.",
-    metrics: [["Scheduled for training", 36], ["For reschedule", 5], ["Work deployment", 18], ["ORE completed", 29], ["Completion rate", 84]],
-    rows: [
-      ["Christopher Lopez", "Training cohort 07/28", "Scheduled", "Jul 25, 2026", "Noah Davis"],
-      ["Robert Lipinski", "Route 14 / Wave 2", "Work deployment", "Jul 25, 2026", "Noah Davis"],
-      ["Chris Durham", "Awaiting trainer", "For reschedule", "Jul 24, 2026", "Noah Davis"],
-      ["Marquis McKnight", "ORE passed", "Work deployment", "Jul 24, 2026", "Noah Davis"],
-      ["Kevin Moore", "Training cohort 07/27", "Scheduled", "Jul 23, 2026", "Noah Davis"],
-    ],
+    emptyMetrics: [["Scheduled for training", 0], ["For reschedule", 0], ["Work deployment", 0]],
   },
 };
-
-const timeRows = [
-  { id: 1, name: "Andre Collins", issue: "Early punch in", detail: "18 min before scheduled shift", date: "Jul 25", hours: "0.30 h" },
-  { id: 2, name: "Marcus Bell", issue: "Late punch out", detail: "27 min after route completion", date: "Jul 25", hours: "0.45 h" },
-  { id: 3, name: "Jordan Price", issue: "Payroll / Flex mismatch", detail: "Payroll exceeds Flex by 42 min", date: "Jul 24", hours: "0.70 h" },
-  { id: 4, name: "Evan Brooks", issue: "Lunch over 1 hour", detail: "Recorded lunch duration: 1h 22m", date: "Jul 24", hours: "0.37 h" },
-];
 
 function initials(name: string) {
   return name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
@@ -136,25 +130,111 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+function metricNumber(metric: SavedMetric) {
+  const value = Number(metric.numeric_value ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function dedupePublishedReports(reports: PublishedReport[]) {
+  const latest = new Map<string, PublishedReport>();
+  reports.forEach((report) => {
+    const key = `${report.vertical_id}:${report.report_date}`;
+    const current = latest.get(key);
+    if (!current || report.version > current.version) latest.set(key, report);
+  });
+  return Array.from(latest.values()).sort((a, b) => b.report_date.localeCompare(a.report_date));
+}
+
+function reportsForPage(reports: PublishedReport[], page: Page) {
+  const vertical = verticalOptions.find((option) => option.key === page);
+  return vertical ? reports.filter((report) => report.vertical_id === vertical.id) : [];
+}
+
+function reportTotal(report: PublishedReport | undefined) {
+  return report?.report_metrics.reduce((sum, item) => sum + metricNumber(item), 0) ?? 0;
+}
+
+function buildVerticalCards(reports: PublishedReport[]) {
+  return verticalOptions.map((vertical, index) => {
+    const matching = reports.filter((report) => report.vertical_id === vertical.id);
+    const latest = matching[0];
+    return {
+      id: vertical.key,
+      num: `0${index + 1}`,
+      title: vertical.name,
+      today: reportTotal(latest),
+      month: matching.reduce((sum, report) => sum + reportTotal(report), 0),
+      status: latest ? `Updated ${latest.report_date}` : "Awaiting report",
+      tone: latest ? "ok" : "review",
+    };
+  });
+}
+
+function displayDate(value: string | null | undefined) {
+  if (!value) return "—";
+  const parsed = new Date(value.includes("T") ? value : `${value}T12:00:00`);
+  return Number.isNaN(parsed.valueOf())
+    ? value
+    : parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function rowStage(data: SavedRow["data"], page: "recruiting" | "orientation" | "training") {
+  if (page === "recruiting") {
+    if (data.drug_test) return `Drug test: ${data.drug_test}`;
+    if (data.background_check) return `Background: ${data.background_check}`;
+    if (data.interview_result) return `Interview: ${data.interview_result}`;
+    if (data.scheduled_interview) return "Interview scheduled";
+    return "Applicant contacted";
+  }
+  if (page === "orientation") {
+    if (data.adp_section_1_completed) return "Ready for ADP";
+    if (data.adp_section_1_sent) return "ADP Section 1 sent";
+    if (data.orientation_docs_completed) return "Orientation documents complete";
+    return "Document collection";
+  }
+  if (data.work_schedule_plotted) return `Work schedule: ${data.work_schedule_plotted}`;
+  if (data.training_status) return `Training: ${data.training_status}`;
+  if (data.ore_schedule) return "ORE scheduled";
+  return "Training scheduled";
+}
+
+function rowLastUpdate(data: SavedRow["data"], fallback: string) {
+  const candidates = [
+    data.work_schedule_plotted,
+    data.ore_schedule,
+    data.scheduled_training,
+    data.adp_section_1_completed,
+    data.adp_section_1_sent,
+    data.orientation_docs_completed,
+    data.orientation_docs_sent,
+    data.scheduled_interview,
+    data.activity_date,
+  ];
+  const value = candidates.find((candidate) => candidate !== null && candidate !== undefined && String(candidate).trim());
+  return value ? String(value) : displayDate(fallback);
+}
+
 export function OpsConsole() {
-  const [demoRole, setDemoRole] = useState<Role>("client");
   const [page, setPage] = useState<Page>("overview");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [upload, setUpload] = useState<UploadPreview | null>(null);
-  const [verdicts, setVerdicts] = useState<Record<number, Verdict>>({});
-  const [authReady, setAuthReady] = useState(!isSupabaseConfigured);
+  const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({});
+  const [authReady, setAuthReady] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<PortalProfile | null>(null);
-  const [clients, setClients] = useState<ClientOption[]>(demoClients);
+  const [clients, setClients] = useState<ClientOption[]>([]);
   const [employeeDspId, setEmployeeDspId] = useState<string | null>(null);
+  const [publishedReports, setPublishedReports] = useState<PublishedReport[]>([]);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
-  const role = isSupabaseConfigured ? roleFromProfile(profile) : demoRole;
+  const role = roleFromProfile(profile);
   const employeeDsp = clients.find((client) => client.id === employeeDspId);
   const selectedClient = role === "employee"
     ? employeeDsp
     : clients.find((client) => client.id === profile?.client_id) ?? clients[0];
   const clientName = selectedClient?.company_name ?? (role === "employee" ? "Choose a DSP" : "Client workspace");
+  const verticalCards = useMemo(() => buildVerticalCards(publishedReports), [publishedReports]);
 
   useEffect(() => {
     if (!toast) return;
@@ -179,7 +259,7 @@ export function OpsConsole() {
         client.from("clients").select("id, company_name, primary_email").eq("active", true).order("company_name"),
       ]);
       setProfile((profileData as PortalProfile | null) ?? null);
-      if (clientData?.length) setClients(clientData as ClientOption[]);
+      setClients((clientData as ClientOption[] | null) ?? []);
       setAuthReady(true);
     }
 
@@ -189,6 +269,39 @@ export function OpsConsole() {
     });
     return () => listener.subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!supabase || !session || !selectedClient?.id || role === "admin") {
+      return;
+    }
+    let active = true;
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 29);
+    async function loadPublishedReports() {
+      if (!supabase) return;
+      const { data, error } = await supabase
+        .from("reports")
+        .select("id, vertical_id, report_date, version, published_at, report_metrics(metric_key, metric_label, numeric_value, text_value), report_rows(id, row_type, person_name, data, source_row)")
+        .eq("client_id", selectedClient.id)
+        .eq("status", "published")
+        .gte("report_date", startDate.toISOString().slice(0, 10))
+        .order("report_date", { ascending: false })
+        .order("version", { ascending: false });
+        if (!active) return;
+        if (error) {
+          setToast(`Client reports could not be loaded: ${error.message}`);
+          setPublishedReports([]);
+        } else {
+          setPublishedReports(dedupePublishedReports((data ?? []) as unknown as PublishedReport[]));
+        }
+    }
+    loadPublishedReports();
+    const refreshTimer = window.setInterval(loadPublishedReports, 30000);
+    return () => {
+      active = false;
+      window.clearInterval(refreshTimer);
+    };
+  }, [role, selectedClient?.id, session]);
 
   const pageTitle = useMemo(() => {
     if (role === "admin") return "Super Admin command center";
@@ -206,8 +319,26 @@ export function OpsConsole() {
     const client = clients.find((item) => item.id === clientId);
     const vertical = verticalOptions.find((item) => item.id === verticalId);
     let reportId: string | undefined;
+    let extraction;
+
+    try {
+      setToast("Reading the uploaded report…");
+      extraction = await extractReportFromFile(file, verticalId);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "The report could not be read.");
+      return;
+    }
 
     if (supabase && session && profile) {
+      const { data: previousReports } = await supabase
+        .from("reports")
+        .select("version")
+        .eq("client_id", clientId)
+        .eq("vertical_id", verticalId)
+        .eq("report_date", reportDate)
+        .order("version", { ascending: false })
+        .limit(1);
+      const version = Number(previousReports?.[0]?.version ?? 0) + 1;
       const { data: report, error: reportError } = await supabase
         .from("reports")
         .insert({
@@ -220,6 +351,7 @@ export function OpsConsole() {
           file_size: file.size,
           created_by: profile.id,
           extraction_status: "queued",
+          version,
         })
         .select("id")
         .single();
@@ -236,10 +368,39 @@ export function OpsConsole() {
         setToast(storageError.message);
         return;
       }
+
+      const [{ error: metricError }, { error: rowError }] = await Promise.all([
+        supabase.from("report_metrics").insert(extraction.metrics.map((item) => ({
+          report_id: report.id,
+          metric_key: item.key,
+          metric_label: item.label,
+          numeric_value: item.value,
+        }))),
+        supabase.from("report_rows").insert(extraction.rows.map((item) => ({
+          report_id: report.id,
+          row_type: item.sheetName,
+          person_name: item.personName,
+          data: item.data,
+          source_row: item.sourceRow,
+          confidence: 1,
+        }))),
+      ]);
+      if (metricError || rowError) {
+        const message = metricError?.message ?? rowError?.message ?? "Extracted data could not be saved.";
+        await supabase.from("reports").update({ status: "failed", extraction_status: message }).eq("id", report.id);
+        setToast(message);
+        return;
+      }
+
       await supabase.from("reports").update({
         source_file_path: path,
         status: "needs_review",
-        extraction_status: "sample_parser_ready",
+        extraction_status: "complete",
+        extraction_summary: {
+          row_count: extraction.rows.length,
+          metric_count: extraction.metrics.length,
+          sheets: Array.from(new Set(extraction.rows.map((item) => item.sheetName))),
+        },
       }).eq("id", report.id);
     }
 
@@ -249,8 +410,14 @@ export function OpsConsole() {
       reportId,
       clientName: client?.company_name ?? "Selected client",
       verticalName: vertical?.name ?? "Assigned vertical",
+      verticalId,
+      reportDate,
+      metrics: extraction.metrics,
+      rows: extraction.rows,
+      published: false,
     });
-    setToast("File secured and analyzed. Your client preview is ready.");
+    setPreviewOpen(true);
+    setToast(`${extraction.rows.length} report record${extraction.rows.length === 1 ? "" : "s"} extracted and ready for review.`);
   }
 
   async function publishUpload() {
@@ -265,6 +432,8 @@ export function OpsConsole() {
         return;
       }
     }
+    setUpload((current) => current ? { ...current, published: true } : current);
+    setPreviewOpen(false);
     setToast("Daily report published to the client dashboard.");
   }
 
@@ -309,11 +478,15 @@ export function OpsConsole() {
     setToast(`${format.toUpperCase()} export prepared.`);
   }
 
+  if (!isSupabaseConfigured) {
+    return <ConfigurationRequired />;
+  }
+
   if (!authReady) {
     return <div className="loading-screen"><span className="pulse-loader" /><strong>Opening VINE Pulse…</strong></div>;
   }
 
-  if (isSupabaseConfigured && !session) {
+  if (!session) {
     return <LoginScreen onMessage={setToast} />;
   }
 
@@ -351,23 +524,15 @@ export function OpsConsole() {
             <div className="client-avatar">{role === "admin" ? "SA" : initials(clientName)}</div>
             <div>
               <strong>{role === "admin" ? "All DSPs" : clientName}</strong>
-              <span>{role === "employee" && employeeDsp ? "Active DSP workspace" : isSupabaseConfigured ? "Secure production workspace" : "Demo mode · Supabase ready"}</span>
+              <span>{role === "employee" && employeeDsp ? "Active DSP workspace" : "Secure production workspace"}</span>
             </div>
             {role === "employee" && employeeDsp && <button className="link-btn topbar-change-dsp" onClick={() => setEmployeeDspId(null)}>Change DSP</button>}
           </div>
           <div className="top-actions">
-            {!isSupabaseConfigured ? (
-              <div className="role-switch" aria-label="Switch demo role">
-                <button className={role === "admin" ? "active" : ""} onClick={() => setDemoRole("admin")}>Super Admin</button>
-                <button className={role === "employee" ? "active" : ""} onClick={() => setDemoRole("employee")}>Employee</button>
-                <button className={role === "client" ? "active" : ""} onClick={() => setDemoRole("client")}>Client</button>
-              </div>
-            ) : (
-              <span className="pill">{profile?.role.replace("_", " ")}</span>
-            )}
-            <button className="icon-btn" aria-label="Notifications" onClick={() => setToast("You have 3 items waiting for attention.")}>3</button>
-            <div className="user-avatar">{profile ? initials(profile.full_name || profile.email) : role === "admin" ? "SA" : role === "employee" ? "KL" : "CL"}</div>
-            {isSupabaseConfigured && <button className="secondary-btn" onClick={() => supabase?.auth.signOut()}>Sign out</button>}
+            <span className="pill">{profile?.role.replace("_", " ")}</span>
+            <button className="icon-btn" aria-label="Notifications" onClick={() => setToast("No pending notifications.")}>0</button>
+            <div className="user-avatar">{profile ? initials(profile.full_name || profile.email) : "VP"}</div>
+            <button className="secondary-btn" onClick={() => supabase?.auth.signOut()}>Sign out</button>
           </div>
         </header>
 
@@ -385,8 +550,10 @@ export function OpsConsole() {
                 client={employeeDsp}
                 assignedVerticalId={profile?.vertical_id ?? verticalOptions[0].id}
                 upload={upload}
+                previewOpen={previewOpen}
                 onFile={handleUpload}
-                onPreview={() => setDemoRole("client")}
+                onPreview={() => setPreviewOpen(true)}
+                onClosePreview={() => setPreviewOpen(false)}
                 onPublish={publishUpload}
                 onChangeDsp={() => setEmployeeDspId(null)}
               />
@@ -410,9 +577,9 @@ export function OpsConsole() {
                   <ExportControl onExport={exportDashboard} />
                 </div>
               </div>
-              {page === "overview" && <Overview onOpen={selectPage} />}
-              {(page === "recruiting" || page === "orientation" || page === "training") && <VerticalReport page={page} onExport={exportDashboard} />}
-              {page === "time" && <TimeAttendance verdicts={verdicts} onVerdict={(id, verdict) => {
+              {page === "overview" && <Overview onOpen={selectPage} reports={publishedReports} />}
+              {(page === "recruiting" || page === "orientation" || page === "training") && <VerticalReport page={page} reports={publishedReports} onExport={exportDashboard} />}
+              {page === "time" && <TimeAttendance reports={publishedReports} verdicts={verdicts} onVerdict={(id, verdict) => {
                 setVerdicts((current) => ({ ...current, [id]: verdict }));
                 setToast(`Time-theft item marked ${verdict}.`);
               }} />}
@@ -422,6 +589,23 @@ export function OpsConsole() {
       </main>
       {toast && <div className="toast" role="status"><span className="toast-mark">✓</span>{toast}</div>}
     </div>
+  );
+}
+
+function ConfigurationRequired() {
+  return (
+    <main className="login-shell">
+      <section className="login-brand-panel">
+        <Image src="/vine-pulse-logo.png" width={1680} height={908} priority alt="VINE Pulse - Client Reporting and Operations Portal" />
+      </section>
+      <section className="login-form-panel">
+        <div className="login-card">
+          <p className="eyebrow">Configuration required</p>
+          <h1>VINE Pulse is not connected</h1>
+          <p>The production Supabase connection is missing. Contact the system administrator before using this portal.</p>
+        </div>
+      </section>
+    </main>
   );
 }
 
@@ -480,40 +664,40 @@ function ExportControl({ onExport }: { onExport: (format: "csv" | "xlsx" | "pdf"
   );
 }
 
-function Overview({ onOpen }: { onOpen: (page: Page) => void }) {
+function EmptyState({ title, copy }: { title: string; copy: string }) {
+  return (
+    <div className="empty-state">
+      <span className="empty-state-mark">0</span>
+      <div><strong>{title}</strong><p>{copy}</p></div>
+    </div>
+  );
+}
+
+function Overview({ onOpen, reports }: { onOpen: (page: Page) => void; reports: PublishedReport[] }) {
+  const cards = buildVerticalCards(reports);
   return (
     <>
       <div className="hero-grid">
         <section className="panel overview-panel">
           <div className="panel-head">
             <div><h2>Today at a glance</h2><p>Summary totals across all four managed verticals</p></div>
-            <span className="pill">↑ 12.4% vs. yesterday</span>
+            <span className="pill">Live data only</span>
           </div>
           <div className="stats-grid">
-            <Stat index="01" label="Candidates touched" value="62" note="Contacted or reviewed today" />
-            <Stat index="02" label="Onboarding actions" value="24" note="Documents and ADP progress" />
-            <Stat index="03" label="Training actions" value="17" note="Scheduled or deployed" />
-            <Stat index="04" label="Time exceptions" value="19" note="3 require your review" />
+            {cards.map((card) => <Stat key={card.id} index={card.num} label={card.title} value={String(card.today)} note={card.status} />)}
           </div>
-          <div className="chart-wrap">
-            <div className="chart-meta"><strong>Daily operational volume</strong><div className="legend"><span><i /> Completed</span><span><i className="coral" /> Exceptions</span></div></div>
-            <div className="bar-chart" aria-label="Fourteen day operational volume chart">
-              {chartA.map((height, i) => <div className="bar-day" key={i}><span className="bar" style={{ height: `${height}%` }} /><span className="bar coral" style={{ height: `${chartB[i]}%` }} /></div>)}
-            </div>
-            <div className="chart-labels"><span>Jul 12</span><span>14</span><span>16</span><span>18</span><span>20</span><span>22</span><span>Today</span></div>
-          </div>
+          {!reports.length && <EmptyState title="No operational data yet" copy="Your first published report will create the dashboard totals and rolling 30-day history." />}
         </section>
         <section className="panel activity-panel">
           <div className="panel-head"><div><h3>Latest updates</h3><p>Published by your VINE Pulse team</p></div><span className="pill">Live</span></div>
-          <div className="activity-list">
-            {[["TA", "Time exceptions published", "19 records · 3 need validation", "4:28 PM"], ["SH", "Recruiting report updated", "62 candidate actions added", "4:12 PM"], ["OA", "ADP readiness updated", "6 candidates advanced", "3:46 PM"], ["TR", "Deployment schedule published", "4 drivers assigned", "2:18 PM"], ["SH", "Drug test results received", "2 passed · 1 pending", "11:35 AM"]].map(([symbol, title, copy, time]) => (
-              <div className="activity-item" key={title}><span className="activity-symbol">{symbol}</span><div><strong>{title}</strong><p>{copy}</p></div><time>{time}</time></div>
-            ))}
-          </div>
+          {reports.length ? <div className="activity-list">{reports.slice(0, 6).map((report) => {
+            const vertical = verticalOptions.find((item) => item.id === report.vertical_id);
+            return <div className="activity-item" key={report.id}><span className="activity-symbol">{vertical?.key.slice(0, 2).toUpperCase()}</span><div><strong>{vertical?.name ?? "Operational report"}</strong><p>{report.report_rows.length} records · {reportTotal(report)} tracked actions</p></div><time>{displayDate(report.report_date)}</time></div>;
+          })}</div> : <EmptyState title="No updates published" copy="Updates will appear here after an assigned employee publishes a client report." />}
         </section>
       </div>
       <section className="vertical-grid" aria-label="Operational verticals">
-        {verticalCards.map((vertical) => (
+        {cards.map((vertical) => (
           <article className="vertical-card" key={vertical.id} onClick={() => onOpen(vertical.id)} tabIndex={0} onKeyDown={(event) => event.key === "Enter" && onOpen(vertical.id)}>
             <div className="vertical-number"><span>VERTICAL {vertical.num}</span><span className={`status-${vertical.tone}`}>{vertical.status}</span></div>
             <h3>{vertical.title}</h3>
@@ -526,46 +710,69 @@ function Overview({ onOpen }: { onOpen: (page: Page) => void }) {
 }
 
 function Stat({ index, label, value, note }: { index: string; label: string; value: string; note: string }) {
-  return <div className="stat-card"><div className="stat-top"><span>{label}</span><span className="stat-index">{index}</span></div><div className="stat-value"><strong>{value}</strong><span className="trend">↑ 8%</span></div><p>{note}</p></div>;
+  return <div className="stat-card"><div className="stat-top"><span>{label}</span><span className="stat-index">{index}</span></div><div className="stat-value"><strong>{value}</strong></div><p>{note}</p></div>;
 }
 
-function VerticalReport({ page, onExport }: { page: "recruiting" | "orientation" | "training"; onExport: (format: "csv" | "xlsx" | "pdf" | "png" | "jpeg") => void }) {
+function VerticalReport({ page, reports, onExport }: { page: "recruiting" | "orientation" | "training"; reports: PublishedReport[]; onExport: (format: "csv" | "xlsx" | "pdf" | "png" | "jpeg") => void }) {
   const config = reportConfig[page];
+  const matching = reportsForPage(reports, page);
+  const latest = matching[0];
+  const metrics: ReportMetric[] = latest
+    ? latest.report_metrics.map((item) => [item.metric_label, metricNumber(item)])
+    : config.emptyMetrics;
+  const rows = matching.flatMap((report) => report.report_rows.map((row) => ({ report, row }))).slice(0, 100);
+  const recordCount = matching.reduce((sum, report) => sum + report.report_rows.length, 0);
   return (
     <div className="section-grid">
       <section className="panel report-panel">
         <div className="panel-head"><div><h2>{config.title}</h2><p>{config.subtitle}</p></div><ExportControl onExport={onExport} /></div>
-        <div className="metric-strip">{config.metrics.map(([label, value]) => <div className="metric-cell" key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
+        <div className="metric-strip">{metrics.map(([label, value]) => <div className="metric-cell" key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
         <div className="table-wrap">
           <table className="data-table">
             <thead><tr><th>Person</th><th>Current stage</th><th>Last update</th><th>Owner</th></tr></thead>
-            <tbody>{config.rows.map(([name, detail, stage, date, owner]) => <tr key={name}><td><div className="person-cell"><span className="person-avatar">{initials(name)}</span><div><strong>{name}</strong><div className="small-muted">{detail}</div></div></div></td><td><span className="pill">{stage}</span></td><td>{date}</td><td>{owner}</td></tr>)}</tbody>
+            <tbody>
+              {rows.map(({ report, row }) => {
+                const detail = String(row.data.email ?? row.data.phone_number ?? row.row_type);
+                return <tr key={`${report.id}:${row.id}`}><td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><div><strong>{row.person_name ?? "Unnamed record"}</strong><div className="small-muted">{detail}</div></div></div></td><td><span className="pill">{rowStage(row.data, page)}</span></td><td>{rowLastUpdate(row.data, report.report_date)}</td><td>VINE Pulse</td></tr>;
+              })}
+              {!rows.length && <tr><td colSpan={4}><EmptyState title="No report rows yet" copy="Published records for this vertical will appear here." /></td></tr>}
+            </tbody>
           </table>
         </div>
       </section>
       <aside className="side-stack">
-        <section className="panel side-panel"><div className="panel-head"><div><h3>30-day progress</h3><p>Current pipeline conversion</p></div></div><div className="progress-list">{config.metrics.slice(0, 4).map(([label], index) => <div key={label}><div className="progress-head"><span>{label}</span><span>{Math.max(18, 92 - index * 17)}%</span></div><div className="progress-track"><span style={{ width: `${Math.max(18, 92 - index * 17)}%` }} /></div></div>)}</div></section>
+        <section className="panel side-panel"><div className="panel-head"><div><h3>30-day activity</h3><p>Published source reports</p></div></div>{matching.length ? <div className="metric-strip compact-metrics"><div className="metric-cell"><strong>{matching.length}</strong><span>reporting days</span></div><div className="metric-cell"><strong>{recordCount}</strong><span>records</span></div></div> : <EmptyState title="No progress data" copy="Progress rates will be calculated after reports are published." />}</section>
         <section className="panel side-panel"><div className="panel-head"><div><h3>Privacy rule</h3><p>Names are limited to your company</p></div></div><div className="note-box">The overview uses totals. Individual names appear only inside authorized operational detail screens. Raw DL and I-9 documents remain outside the dashboard.</div></section>
       </aside>
     </div>
   );
 }
 
-function TimeAttendance({ verdicts, onVerdict }: { verdicts: Record<number, Verdict>; onVerdict: (id: number, verdict: Verdict) => void }) {
-  const metrics = [["Missed punches", "7"], ["Missing lunch break", "4"], ["Daily hours violation", "3"], ["7-day rolling", "2"], ["Attendance", "5"]];
+function TimeAttendance({ reports, verdicts, onVerdict }: { reports: PublishedReport[]; verdicts: Record<string, Verdict>; onVerdict: (id: string, verdict: Verdict) => void }) {
+  const matching = reportsForPage(reports, "time");
+  const latest = matching[0];
+  const metrics = latest
+    ? latest.report_metrics.map((item) => [item.metric_label, String(metricNumber(item))])
+    : [["Missed punches", "0"], ["Missing lunch break", "0"], ["Daily hours violation", "0"], ["7-day rolling", "0"], ["Attendance", "0"], ["Potential time theft", "0"]];
+  const rows = matching.flatMap((report) => report.report_rows.map((row) => ({ report, row }))).slice(0, 100);
+  const awaitingReview = rows.filter(({ row }) => row.data.possible_time_theft).length;
   return (
     <div className="section-grid">
       <section className="panel report-panel">
-        <div className="panel-head"><div><h2>Time & Attendance</h2><p>Daily exceptions with client validation for potential time theft.</p></div><span className="pill">3 awaiting review</span></div>
+        <div className="panel-head"><div><h2>Time & Attendance</h2><p>Daily exceptions with client validation for potential time theft.</p></div><span className="pill">{awaitingReview} awaiting review</span></div>
         <div className="metric-strip">{metrics.map(([label, value]) => <div className="metric-cell" key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
         <div className="table-wrap"><table className="data-table"><thead><tr><th>Employee</th><th>Potential time theft</th><th>Date</th><th>Variance</th><th>Client decision</th></tr></thead><tbody>
-          {timeRows.map((row) => {
+          {rows.map(({ report, row }) => {
             const verdict = verdicts[row.id] ?? "pending";
-            return <tr key={row.id}><td><div className="person-cell"><span className="person-avatar">{initials(row.name)}</span><strong>{row.name}</strong></div></td><td><strong>{row.issue}</strong><div className="small-muted">{row.detail}</div></td><td>{row.date}</td><td>{row.hours}</td><td><div className="validation-btns"><button className={`valid-btn ${verdict === "valid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "valid")}>Valid</button><button className={`invalid-btn ${verdict === "invalid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "invalid")}>Invalid</button></div></td></tr>;
+            const issue = String(row.data.possible_time_theft ?? (row.data.missed_punch_in || row.data.missed_punch_out ? "Missed punch" : "Attendance record"));
+            const detail = `Sign in: ${String(row.data.sign_in_difference ?? "—")} · Sign out: ${String(row.data.sign_out_difference ?? "—")}`;
+            const variance = `${String(row.data.sign_in_difference ?? "0")} / ${String(row.data.sign_out_difference ?? "0")}`;
+            return <tr key={row.id}><td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><strong>{row.person_name ?? "Unnamed employee"}</strong></div></td><td><strong>{issue}</strong><div className="small-muted">{detail}</div></td><td>{displayDate(report.report_date)}</td><td>{variance}</td><td><div className="validation-btns"><button className={`valid-btn ${verdict === "valid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "valid")}>Valid</button><button className={`invalid-btn ${verdict === "invalid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "invalid")}>Invalid</button></div></td></tr>;
           })}
+          {!rows.length && <tr><td colSpan={5}><EmptyState title="No time and attendance exceptions" copy="Uploaded and published exceptions will appear here for client review." /></td></tr>}
         </tbody></table></div>
       </section>
-      <aside className="side-stack"><section className="panel side-panel"><div className="panel-head"><div><h3>Compliance summary</h3><p>Last 30 days</p></div></div><div className="progress-list"><div><div className="progress-head"><span>Exceptions resolved</span><span>89%</span></div><div className="progress-track"><span style={{ width: "89%" }} /></div></div><div><div className="progress-head"><span>Lunch compliance</span><span>94%</span></div><div className="progress-track"><span style={{ width: "94%" }} /></div></div></div></section><section className="panel side-panel"><div className="panel-head"><div><h3>Decision requirement</h3></div></div><div className="note-box">Invalid and Needs More Information decisions require a client comment. VINE Pulse records the decision-maker and timestamp in the audit history.</div></section></aside>
+      <aside className="side-stack"><section className="panel side-panel"><div className="panel-head"><div><h3>Compliance summary</h3><p>Last 30 days</p></div></div><EmptyState title="No compliance data" copy="Compliance rates will be calculated from published reports." /></section><section className="panel side-panel"><div className="panel-head"><div><h3>Decision requirement</h3></div></div><div className="note-box">Invalid and Needs More Information decisions require a client comment. VINE Pulse records the decision-maker and timestamp in the audit history.</div></section></aside>
     </div>
   );
 }
@@ -611,7 +818,7 @@ function DspLanding({ clients, assignedVerticalId, onSelect }: { clients: Client
   );
 }
 
-function EmployeeWorkspace({ client, assignedVerticalId, upload, onFile, onPreview, onPublish, onChangeDsp }: { client: ClientOption; assignedVerticalId: string; upload: UploadPreview | null; onFile: (file: File | undefined, clientId: string, verticalId: string, reportDate: string) => void; onPreview: () => void; onPublish: () => void; onChangeDsp: () => void }) {
+function EmployeeWorkspace({ client, assignedVerticalId, upload, previewOpen, onFile, onPreview, onClosePreview, onPublish, onChangeDsp }: { client: ClientOption; assignedVerticalId: string; upload: UploadPreview | null; previewOpen: boolean; onFile: (file: File | undefined, clientId: string, verticalId: string, reportDate: string) => void; onPreview: () => void; onClosePreview: () => void; onPublish: () => void; onChangeDsp: () => void }) {
   const [reportDate, setReportDate] = useState(new Date().toISOString().slice(0, 10));
   const vertical = verticalOptions.find((item) => item.id === assignedVerticalId) ?? verticalOptions[0];
   const template = verticalTemplateMeta[vertical.id];
@@ -626,7 +833,7 @@ function EmployeeWorkspace({ client, assignedVerticalId, upload, onFile, onPrevi
         <div><p className="eyebrow">Daily data submission · Due 5 PM ET</p><h1>{client.company_name} workspace</h1><p>You are assigned to <strong>{vertical.name}</strong>. Upload the source report, verify the extraction, and publish it to this DSP only.</p></div>
         <span className="pill">One employee · one vertical</span>
       </div>
-      {upload && <div className="preview-banner"><div><strong>Preview ready · {upload.name}</strong><p>{upload.size} · {upload.clientName} · {upload.verticalName} · 43 records recognized</p></div><div className="preview-actions"><button className="secondary-btn" onClick={onPreview}>View client preview</button><button className="primary-btn" onClick={onPublish}>Publish update</button></div></div>}
+      {upload && <div className="preview-banner"><div><strong>{upload.published ? "Published" : "Ready for review"} · {upload.name}</strong><p>{upload.size} · {upload.clientName} · {upload.verticalName} · {upload.rows.length} extracted records</p></div><div className="preview-actions"><button className="secondary-btn" onClick={onPreview}>View client preview</button><button className="primary-btn" onClick={onPublish} disabled={upload.published}>{upload.published ? "Published" : "Publish update"}</button></div></div>}
       <div className="upload-hero">
         <section className="panel upload-panel">
           <div className="panel-head"><div><h2>Upload today&apos;s source</h2><p>Files are stored in {client.company_name}&apos;s private Supabase folder</p></div><span className="pill">Private storage</span></div>
@@ -636,8 +843,8 @@ function EmployeeWorkspace({ client, assignedVerticalId, upload, onFile, onPrevi
             <label>Vertical<input value={vertical.name} readOnly /></label>
           </div>
           <label className="dropzone">
-            <input type="file" accept=".xlsx,.xls,.csv,.pdf,.png,.jpeg,.jpg" onChange={(event) => onFile(event.target.files?.[0], client.id, vertical.id, reportDate)} aria-label="Upload daily source report" />
-            <div><div className="upload-icon">↑</div><h3>{upload ? upload.name : "Drop a report here or click to browse"}</h3><p>{upload ? "Analysis complete — your preview is ready." : "Accepted: Excel, CSV, PDF, PNG, and JPEG up to 25 MB."}</p><div className="file-types"><span>XLSX</span><span>CSV</span><span>PDF</span><span>PNG</span><span>JPEG</span></div></div>
+            <input type="file" accept=".xlsx,.xls,.csv" onChange={(event) => onFile(event.target.files?.[0], client.id, vertical.id, reportDate)} aria-label="Upload daily source report" />
+            <div><div className="upload-icon">↑</div><h3>{upload ? upload.name : "Drop a report here or click to browse"}</h3><p>{upload ? `${upload.rows.length} real records extracted — no sample records added.` : "Automatic extraction: Excel and CSV up to 25 MB."}</p><div className="file-types"><span>XLSX</span><span>XLS</span><span>CSV</span></div></div>
           </label>
         </section>
         <section className="panel steps-panel">
@@ -647,30 +854,85 @@ function EmployeeWorkspace({ client, assignedVerticalId, upload, onFile, onPrevi
           {[["Upload source", `This upload is locked to ${client.company_name}.`], ["Review extraction", "Confirm totals, names, stages, and exceptions."], ["Preview client view", "See the dashboard before it is visible."], ["Publish update", "Add today’s data to the rolling 30-day report."]].map(([title, copy], index) => <div className="step" key={title}><span className="step-number">0{index + 1}</span><div><strong>{title}</strong><p>{copy}</p></div></div>)}
         </section>
       </div>
+      {upload && previewOpen && <ExtractionPreview upload={upload} onClose={onClosePreview} onPublish={onPublish} />}
     </>
+  );
+}
+
+function ExtractionPreview({ upload, onClose, onPublish }: { upload: UploadPreview; onClose: () => void; onPublish: () => void }) {
+  return (
+    <div className="preview-overlay" role="dialog" aria-modal="true" aria-labelledby="preview-title">
+      <section className="preview-dialog">
+        <div className="panel-head">
+          <div><p className="eyebrow">Client preview · {upload.clientName}</p><h2 id="preview-title">{upload.verticalName}</h2><p>{displayDate(upload.reportDate)} · {upload.rows.length} extracted records</p></div>
+          <button className="icon-btn" onClick={onClose} aria-label="Close preview">×</button>
+        </div>
+        <div className="metric-strip">{upload.metrics.map((item) => <div className="metric-cell" key={item.key}><strong>{item.value}</strong><span>{item.label}</span></div>)}</div>
+        <div className="table-wrap preview-table">
+          <table className="data-table">
+            <thead><tr><th>Person</th><th>Source sheet</th><th>Extracted details</th></tr></thead>
+            <tbody>{upload.rows.slice(0, 100).map((row) => {
+              const details = Object.entries(row.data)
+                .filter(([, value]) => value !== null && value !== "")
+                .slice(0, 5)
+                .map(([key, value]) => `${key.replaceAll("_", " ")}: ${String(value)}`)
+                .join(" · ");
+              return <tr key={`${row.sheetName}:${row.sourceRow}`}><td><strong>{row.personName}</strong></td><td>{row.sheetName}</td><td className="preview-details">{details}</td></tr>;
+            })}</tbody>
+          </table>
+        </div>
+        <div className="preview-dialog-actions"><button className="secondary-btn" onClick={onClose}>Back to upload</button><button className="primary-btn" onClick={onPublish} disabled={upload.published}>{upload.published ? "Already published" : "Publish to client dashboard"}</button></div>
+      </section>
+    </div>
   );
 }
 
 function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clients: ClientOption[]; session: Session | null; onClientsChange: (clients: ClientOption[]) => void; onMessage: (message: string) => void }) {
   const [clientCompany, setClientCompany] = useState("");
   const [clientEmail, setClientEmail] = useState("");
-  const [users, setUsers] = useState([
-    { name: "Karen Lee", email: "karen.lee@example.test", role: "Employee", assignment: "Sourcing & Hiring · 3 clients" },
-    { name: "Mia Chen", email: "mia.chen@example.test", role: "Employee", assignment: "Orientation & ADP · 3 clients" },
-    { name: "Jordan Avery", email: "jordan.avery@example.test", role: "Client", assignment: "Northstar Delivery" },
-  ]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
   const [userForm, setUserForm] = useState({ fullName: "", email: "", password: "", role: "employee", clientId: clients[0]?.id ?? "", verticalId: verticalOptions[0].id, clientIds: [] as string[] });
+  const selectedClientId = userForm.clientId || clients[0]?.id || "";
+
+  useEffect(() => {
+    if (!supabase || !session) return;
+    let active = true;
+
+    supabase
+      .from("profiles")
+      .select("email, full_name, role, client_id, vertical_id")
+      .eq("active", true)
+      .order("created_at")
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) {
+          onMessage(error.message);
+          return;
+        }
+        setUsers((data ?? []).map((user) => {
+          const vertical = verticalOptions.find((item) => item.id === user.vertical_id);
+          const client = clients.find((item) => item.id === user.client_id);
+          return {
+            name: user.full_name || user.email,
+            email: user.email,
+            role: user.role === "super_admin" ? "Super Admin" : user.role === "employee" ? "Employee" : "Client",
+            assignment: user.role === "super_admin" ? "All access" : user.role === "employee" ? vertical?.name ?? "Vertical pending" : client?.company_name ?? "DSP pending",
+          };
+        }));
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [clients, onMessage, session]);
 
   async function addClient(event: React.FormEvent) {
     event.preventDefault();
     if (!clientCompany.trim() || !clientEmail.trim()) return;
-    if (supabase && session) {
-      const { data, error } = await supabase.from("clients").insert({ company_name: clientCompany.trim(), primary_email: clientEmail.trim().toLowerCase(), created_by: session.user.id }).select("id, company_name, primary_email").single();
-      if (error) return onMessage(error.message);
-      onClientsChange([...clients, data as ClientOption].sort((a, b) => a.company_name.localeCompare(b.company_name)));
-    } else {
-      onClientsChange([...clients, { id: crypto.randomUUID(), company_name: clientCompany.trim(), primary_email: clientEmail.trim().toLowerCase() }]);
-    }
+    if (!supabase || !session) return onMessage("The production database is unavailable.");
+    const { data, error } = await supabase.from("clients").insert({ company_name: clientCompany.trim(), primary_email: clientEmail.trim().toLowerCase(), created_by: session.user.id }).select("id, company_name, primary_email").single();
+    if (error) return onMessage(error.message);
+    onClientsChange([...clients, data as ClientOption].sort((a, b) => a.company_name.localeCompare(b.company_name)));
     setClientCompany("");
     setClientEmail("");
     onMessage("DSP workspace created.");
@@ -683,23 +945,26 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
       onMessage("Select at least one DSP for this employee.");
       return;
     }
-    if (supabase && session) {
-      const response = await fetch("/api/admin/users", {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({
-          ...userForm,
-          clientId: userForm.role === "client" ? userForm.clientId : null,
-          verticalId: userForm.role === "employee" ? userForm.verticalId : null,
-          clientIds: userForm.role === "employee" ? userForm.clientIds : [],
-          role: userForm.role === "admin" ? "super_admin" : userForm.role,
-        }),
-      });
-      const result = await response.json() as { error?: string };
-      if (!response.ok) return onMessage(result.error ?? "User creation failed.");
+    if (userForm.role === "client" && !selectedClientId) {
+      onMessage("Create a DSP before adding a client user.");
+      return;
     }
+    if (!supabase || !session) return onMessage("The production database is unavailable.");
+    const response = await fetch("/api/admin/users", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({
+        ...userForm,
+        clientId: userForm.role === "client" ? selectedClientId : null,
+        verticalId: userForm.role === "employee" ? userForm.verticalId : null,
+        clientIds: userForm.role === "employee" ? userForm.clientIds : [],
+        role: userForm.role === "admin" ? "super_admin" : userForm.role,
+      }),
+    });
+    const result = await response.json() as { error?: string };
+    if (!response.ok) return onMessage(result.error ?? "User creation failed.");
     const vertical = verticalOptions.find((item) => item.id === userForm.verticalId);
-    const client = clients.find((item) => item.id === userForm.clientId);
+    const client = clients.find((item) => item.id === selectedClientId);
     setUsers([...users, { name: userForm.fullName, email: userForm.email, role: userForm.role === "admin" ? "Super Admin" : userForm.role === "employee" ? "Employee" : "Client", assignment: userForm.role === "employee" ? `${vertical?.name} · ${userForm.clientIds.length} DSPs` : userForm.role === "client" ? client?.company_name ?? "Client" : "All access" }]);
     setUserForm({ ...userForm, fullName: "", email: "", password: "" });
     onMessage("User account created.");
@@ -711,8 +976,8 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
       <div className="admin-stat-grid">
         <Stat index="01" label="Active DSPs" value={String(clients.length)} note="Manually managed workspaces" />
         <Stat index="02" label="Portal users" value={String(users.length)} note="Admins, employees, and clients" />
-        <Stat index="03" label="Vertical coverage" value="100%" note="One owner per client/vertical" />
-        <Stat index="04" label="Reports due" value="12" note="Today by 5:00 PM ET" />
+        <Stat index="03" label="Verticals configured" value="4" note="Production report structures" />
+        <Stat index="04" label="Reports received" value="0" note="No client reports uploaded yet" />
       </div>
       <div className="admin-form-grid">
         <section className="panel admin-form-panel">
@@ -730,7 +995,7 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
             <div className="form-row"><label>Temporary password<input required minLength={10} type="password" value={userForm.password} onChange={(event) => setUserForm({ ...userForm, password: event.target.value })} placeholder="Minimum 10 characters" /></label><label>Role<select value={userForm.role} onChange={(event) => setUserForm({ ...userForm, role: event.target.value })}><option value="employee">Employee</option><option value="client">Client</option><option value="admin">Super Admin</option></select></label></div>
             {userForm.role === "employee" && <label>Employee vertical<select value={userForm.verticalId} onChange={(event) => setUserForm({ ...userForm, verticalId: event.target.value })}>{verticalOptions.map((vertical) => <option key={vertical.id} value={vertical.id}>{vertical.name}</option>)}</select><small>The employee will be assigned this one vertical across all selected DSPs.</small></label>}
             {userForm.role === "employee" && <fieldset className="dsp-assignment-fieldset"><legend>Assigned DSPs</legend><div className="dsp-assignment-list">{clients.map((client) => <label key={client.id}><input type="checkbox" checked={userForm.clientIds.includes(client.id)} onChange={(event) => setUserForm({ ...userForm, clientIds: event.target.checked ? [...userForm.clientIds, client.id] : userForm.clientIds.filter((id) => id !== client.id) })} /><span>{client.company_name}</span></label>)}</div><small>Only selected DSPs will appear on the employee landing page.</small></fieldset>}
-            {userForm.role === "client" && <label>Client company<select value={userForm.clientId} onChange={(event) => setUserForm({ ...userForm, clientId: event.target.value })}>{clients.map((client) => <option key={client.id} value={client.id}>{client.company_name}</option>)}</select></label>}
+            {userForm.role === "client" && <label>Client company<select value={selectedClientId} onChange={(event) => setUserForm({ ...userForm, clientId: event.target.value })}>{clients.map((client) => <option key={client.id} value={client.id}>{client.company_name}</option>)}</select></label>}
             <button className="primary-btn">Create user account</button>
           </form>
         </section>
@@ -738,11 +1003,11 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
       <div className="admin-table-grid">
         <section className="panel report-panel">
           <div className="panel-head"><div><h2>DSPs</h2><p>Every DSP is isolated by database and Storage policies</p></div></div>
-          <div className="table-wrap"><table className="data-table"><thead><tr><th>Company</th><th>Primary email</th><th>Status</th></tr></thead><tbody>{clients.map((client) => <tr key={client.id}><td><strong>{client.company_name}</strong></td><td>{client.primary_email}</td><td><span className="status-ok">Active</span></td></tr>)}</tbody></table></div>
+          <div className="table-wrap"><table className="data-table"><thead><tr><th>Company</th><th>Primary email</th><th>Status</th></tr></thead><tbody>{clients.map((client) => <tr key={client.id}><td><strong>{client.company_name}</strong></td><td>{client.primary_email}</td><td><span className="status-ok">Active</span></td></tr>)}{!clients.length && <tr><td colSpan={3}><EmptyState title="No DSPs added" copy="Use the Add DSP form to create your practice client workspace." /></td></tr>}</tbody></table></div>
         </section>
         <section className="panel report-panel">
           <div className="panel-head"><div><h2>Users & assignments</h2><p>Employee verticals and client membership</p></div></div>
-          <div className="table-wrap"><table className="data-table"><thead><tr><th>User</th><th>Role</th><th>Access</th></tr></thead><tbody>{users.map((user) => <tr key={user.email}><td><div className="person-cell"><span className="person-avatar">{initials(user.name)}</span><div><strong>{user.name}</strong><div className="small-muted">{user.email}</div></div></div></td><td><span className="pill">{user.role}</span></td><td>{user.assignment}</td></tr>)}</tbody></table></div>
+          <div className="table-wrap"><table className="data-table"><thead><tr><th>User</th><th>Role</th><th>Access</th></tr></thead><tbody>{users.map((user) => <tr key={user.email}><td><div className="person-cell"><span className="person-avatar">{initials(user.name)}</span><div><strong>{user.name}</strong><div className="small-muted">{user.email}</div></div></div></td><td><span className="pill">{user.role}</span></td><td>{user.assignment}</td></tr>)}{!users.length && <tr><td colSpan={3}><EmptyState title="No portal users found" copy="Create an employee or client login after adding the DSP." /></td></tr>}</tbody></table></div>
         </section>
       </div>
       <section className="panel admin-resource-panel">

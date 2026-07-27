@@ -238,31 +238,6 @@ button {
   gap: 10px;
 }
 
-.role-switch {
-  display: flex;
-  padding: 3px;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  background: rgba(255,255,255,.65);
-}
-
-.role-switch button {
-  padding: 7px 11px;
-  border: 0;
-  border-radius: 8px;
-  color: var(--muted);
-  background: transparent;
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.role-switch button.active {
-  color: #fff;
-  background: var(--purple);
-  box-shadow: 0 5px 12px rgba(78,53,119,.2);
-}
-
 .icon-btn,
 .secondary-btn,
 .primary-btn {
@@ -845,6 +820,43 @@ button {
   line-height: 1.55;
 }
 
+.empty-state {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 96px;
+  padding: 20px;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  background: rgba(247, 250, 249, .8);
+  color: var(--muted);
+}
+
+.empty-state-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--green);
+  background: var(--green-soft);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.empty-state strong {
+  display: block;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.empty-state p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .upload-hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 330px;
@@ -1030,6 +1042,62 @@ button {
 .preview-actions {
   display: flex;
   gap: 8px;
+}
+
+.preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(20, 30, 44, .62);
+  backdrop-filter: blur(7px);
+}
+
+.preview-dialog {
+  width: min(1060px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid rgba(255, 255, 255, .5);
+  border-radius: 20px;
+  background: #fffdf9;
+  box-shadow: 0 30px 90px rgba(15, 24, 37, .28);
+}
+
+.preview-dialog .metric-strip {
+  margin: 20px 0;
+}
+
+.preview-table {
+  max-height: 48vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.preview-details {
+  min-width: 420px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.preview-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 18px;
+}
+
+.compact-metrics {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.primary-btn:disabled {
+  cursor: not-allowed;
+  opacity: .55;
 }
 
 .toast {
@@ -1722,15 +1790,6 @@ button {
     flex: 1;
   }
 
-  .role-switch {
-    order: 3;
-    width: 100%;
-  }
-
-  .role-switch button {
-    flex: 1;
-  }
-
   .page-heading {
     align-items: flex-start;
     flex-direction: column;
@@ -1801,5 +1860,22 @@ button {
   .preview-banner {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .preview-overlay {
+    padding: 10px;
+  }
+
+  .preview-dialog {
+    max-height: calc(100vh - 20px);
+    padding: 16px;
+  }
+
+  .preview-dialog-actions {
+    flex-direction: column-reverse;
+  }
+
+  .preview-dialog-actions button {
+    width: 100%;
   }
 }
