@@ -33,7 +33,7 @@ type UploadPreview = {
   published: boolean;
 };
 type ReportMetric = [string, number];
-type AdminUser = { name: string; email: string; role: string; assignment: string };
+type AdminUser = { id: string; name: string; email: string; role: string; assignment: string };
 type ResetResult = {
   error?: string;
   details?: string[];
@@ -1029,6 +1029,8 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
   const [resetScope, setResetScope] = useState<ResetScope | null>(null);
   const [resetConfirmation, setResetConfirmation] = useState("");
   const [resetBusy, setResetBusy] = useState(false);
+  const [deleteUserTarget, setDeleteUserTarget] = useState<AdminUser | null>(null);
+  const [deleteUserBusy, setDeleteUserBusy] = useState(false);
   const [userForm, setUserForm] = useState({ fullName: "", email: "", password: "", role: "employee", clientId: clients[0]?.id ?? "", verticalId: verticalOptions[0].id, clientIds: [] as string[] });
   const selectedClientId = userForm.clientId || clients[0]?.id || "";
   const resetPhrase = resetScope === "workspace" ? "RESET VINE PULSE" : "CLEAR REPORTS";
@@ -1040,7 +1042,7 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
     Promise.all([
       supabase
         .from("profiles")
-        .select("email, full_name, role, client_id, vertical_id")
+        .select("id, email, full_name, role, client_id, vertical_id")
         .eq("active", true)
         .order("created_at"),
       supabase
@@ -1060,6 +1062,7 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
           const vertical = verticalOptions.find((item) => item.id === user.vertical_id);
           const client = clients.find((item) => item.id === user.client_id);
           return {
+            id: user.id,
             name: user.full_name || user.email,
             email: user.email,
             role: user.role === "super_admin" ? "Super Admin" : user.role === "employee" ? "Employee" : "Client",
@@ -1108,11 +1111,11 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
         role: userForm.role === "admin" ? "super_admin" : userForm.role,
       }),
     });
-    const result = await response.json() as { error?: string };
+    const result = await response.json() as { error?: string; user?: { id: string } };
     if (!response.ok) return onMessage(result.error ?? "User creation failed.");
     const vertical = verticalOptions.find((item) => item.id === userForm.verticalId);
     const client = clients.find((item) => item.id === selectedClientId);
-    setUsers([...users, { name: userForm.fullName, email: userForm.email, role: userForm.role === "admin" ? "Super Admin" : userForm.role === "employee" ? "Employee" : "Client", assignment: userForm.role === "employee" ? `${vertical?.name} · ${userForm.clientIds.length} DSPs` : userForm.role === "client" ? client?.company_name ?? "Client" : "All access" }]);
+    setUsers([...users, { id: result.user?.id ?? "", name: userForm.fullName, email: userForm.email, role: userForm.role === "admin" ? "Super Admin" : userForm.role === "employee" ? "Employee" : "Client", assignment: userForm.role === "employee" ? `${vertical?.name} · ${userForm.clientIds.length} DSPs` : userForm.role === "client" ? client?.company_name ?? "Client" : "All access" }]);
     setUserForm({ ...userForm, fullName: "", email: "", password: "" });
     onMessage("User account created.");
   }
@@ -1155,7 +1158,7 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
       setReportsCount(0);
       if (resetScope === "workspace") {
         onClientsChange([]);
-        setUsers((current) => current.filter((user) => user.email === session.user.email));
+        setUsers((current) => current.filter((user) => user.id === session.user.id));
         setUserForm((current) => ({
           ...current,
           clientId: "",
@@ -1173,6 +1176,35 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
       onMessage("The reset request could not reach the server.");
     } finally {
       setResetBusy(false);
+    }
+  }
+
+  async function deleteSelectedUser() {
+    if (!session || !deleteUserTarget || deleteUserTarget.id === session.user.id) return;
+    setDeleteUserBusy(true);
+
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "DELETE",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ userId: deleteUserTarget.id }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) {
+        onMessage(result.error ?? "The user could not be deleted.");
+        return;
+      }
+
+      setUsers((current) => current.filter((user) => user.id !== deleteUserTarget.id));
+      onMessage(`${deleteUserTarget.name} was deleted.`);
+      setDeleteUserTarget(null);
+    } catch {
+      onMessage("The delete request could not reach the server.");
+    } finally {
+      setDeleteUserBusy(false);
     }
   }
 
@@ -1213,7 +1245,7 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
         </section>
         <section className="panel report-panel">
           <div className="panel-head"><div><h2>Users & assignments</h2><p>Employee verticals and client membership</p></div></div>
-          <div className="table-wrap"><table className="data-table"><thead><tr><th>User</th><th>Role</th><th>Access</th></tr></thead><tbody>{users.map((user) => <tr key={user.email}><td><div className="person-cell"><span className="person-avatar">{initials(user.name)}</span><div><strong>{user.name}</strong><div className="small-muted">{user.email}</div></div></div></td><td><span className="pill">{user.role}</span></td><td>{user.assignment}</td></tr>)}{!users.length && <tr><td colSpan={3}><EmptyState title="No portal users found" copy="Create an employee or client login after adding the DSP." /></td></tr>}</tbody></table></div>
+          <div className="table-wrap"><table className="data-table"><thead><tr><th>User</th><th>Role</th><th>Access</th><th>Action</th></tr></thead><tbody>{users.map((user) => <tr key={user.id || user.email}><td><div className="person-cell"><span className="person-avatar">{initials(user.name)}</span><div><strong>{user.name}</strong><div className="small-muted">{user.email}</div></div></div></td><td><span className="pill">{user.role}</span></td><td>{user.assignment}</td><td>{user.id === session?.user.id ? <span className="current-account-label">Current account</span> : <button className="table-delete-btn" onClick={() => setDeleteUserTarget(user)} disabled={!user.id}>Delete user</button>}</td></tr>)}{!users.length && <tr><td colSpan={4}><EmptyState title="No portal users found" copy="Create an employee or client login after adding the DSP." /></td></tr>}</tbody></table></div>
         </section>
       </div>
       <section className="panel danger-zone">
@@ -1260,6 +1292,22 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
                 disabled={resetBusy || resetConfirmation !== resetPhrase}
               >
                 {resetBusy ? "Clearing data…" : resetScope === "workspace" ? "Reset demo workspace" : "Clear all report data"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {deleteUserTarget && (
+        <div className="preview-overlay" role="dialog" aria-modal="true" aria-labelledby="delete-user-dialog-title">
+          <section className="preview-dialog reset-dialog">
+            <div className="reset-symbol" aria-hidden="true">!</div>
+            <p className="eyebrow">Delete portal user</p>
+            <h2 id="delete-user-dialog-title">Delete {deleteUserTarget.name}?</h2>
+            <p>This permanently removes the login for <strong>{deleteUserTarget.email}</strong> and all of their DSP and vertical assignments. Existing reports are preserved under your Super Admin account.</p>
+            <div className="preview-dialog-actions">
+              <button className="secondary-btn" onClick={() => setDeleteUserTarget(null)} disabled={deleteUserBusy}>Cancel</button>
+              <button className="danger-btn" onClick={deleteSelectedUser} disabled={deleteUserBusy}>
+                {deleteUserBusy ? "Deleting user…" : "Delete user"}
               </button>
             </div>
           </section>
