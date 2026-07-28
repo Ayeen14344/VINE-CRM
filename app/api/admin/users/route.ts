@@ -10,6 +10,10 @@ type CreateUserPayload = {
   clientIds?: string[];
 };
 
+type DeleteUserPayload = {
+  userId?: string;
+};
+
 function serverClient() {
   const url =
     process.env.NEXT_PUBLIC_SUPABASE_URL ??
@@ -139,4 +143,104 @@ export async function POST(request: Request) {
   });
 
   return Response.json({ user: profile }, { status: 201 });
+}
+
+export async function DELETE(request: Request) {
+  const { admin, missing } = serverClient();
+  if (!admin) {
+    return Response.json(
+      {
+        error: `Supabase server configuration is incomplete. Missing: ${missing.join(
+          ", ",
+        )}.`,
+      },
+      { status: 503 },
+    );
+  }
+
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (!bearer) {
+    return Response.json({ error: "Authentication is required." }, { status: 401 });
+  }
+
+  const { data: authData, error: authError } = await admin.auth.getUser(bearer);
+  if (authError || !authData.user) {
+    return Response.json({ error: "Your session is invalid." }, { status: 401 });
+  }
+
+  const { data: requester } = await admin
+    .from("profiles")
+    .select("role, active")
+    .eq("id", authData.user.id)
+    .single();
+
+  if (!requester?.active || requester.role !== "super_admin") {
+    return Response.json({ error: "Super Admin access is required." }, { status: 403 });
+  }
+
+  const payload = (await request.json()) as DeleteUserPayload;
+  const userId = payload.userId?.trim();
+
+  if (!userId) {
+    return Response.json({ error: "Select a user to delete." }, { status: 400 });
+  }
+
+  if (userId === authData.user.id) {
+    return Response.json(
+      { error: "You cannot delete the Super Admin account you are currently using." },
+      { status: 400 },
+    );
+  }
+
+  const { data: target, error: targetError } = await admin
+    .from("profiles")
+    .select("id, email, full_name, role")
+    .eq("id", userId)
+    .single();
+
+  if (targetError || !target) {
+    return Response.json({ error: "The selected user no longer exists." }, { status: 404 });
+  }
+
+  const { error: createdReportsError } = await admin
+    .from("reports")
+    .update({ created_by: authData.user.id })
+    .eq("created_by", userId);
+
+  if (createdReportsError) {
+    return Response.json({ error: createdReportsError.message }, { status: 400 });
+  }
+
+  const { error: publishedReportsError } = await admin
+    .from("reports")
+    .update({ published_by: authData.user.id })
+    .eq("published_by", userId);
+
+  if (publishedReportsError) {
+    return Response.json({ error: publishedReportsError.message }, { status: 400 });
+  }
+
+  const { error: deleteError } = await admin.auth.admin.deleteUser(userId);
+  if (deleteError) {
+    return Response.json({ error: deleteError.message }, { status: 400 });
+  }
+
+  await admin.from("audit_log").insert({
+    actor_id: authData.user.id,
+    action: "user.deleted",
+    entity_type: "profile",
+    entity_id: userId,
+    metadata: {
+      email: target.email,
+      full_name: target.full_name,
+      role: target.role,
+    },
+  });
+
+  return Response.json({
+    deletedUser: {
+      id: userId,
+      email: target.email,
+    },
+  });
 }
