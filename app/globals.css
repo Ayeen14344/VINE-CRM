@@ -1656,6 +1656,34 @@ button {
   background: #fff9e9;
 }
 
+.table-delete-btn {
+  padding: 7px 9px;
+  border: 1px solid #efc9cc;
+  border-radius: 8px;
+  color: #a2212c;
+  background: #fff7f7;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 760;
+}
+
+.table-delete-btn:hover {
+  border-color: #d7868d;
+  background: #ffeded;
+}
+
+.table-delete-btn:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+.current-account-label {
+  color: #087653;
+  font-size: 9px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
 .reset-dialog {
   width: min(560px, 100%);
 }
