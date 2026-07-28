@@ -11,19 +11,38 @@ type CreateUserPayload = {
 };
 
 function serverClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceKey) return null;
-  return createClient(url, serviceKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
+  const url =
+    process.env.NEXT_PUBLIC_SUPABASE_URL ??
+    process.env.SUPABASE_URL;
+  const serviceKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ??
+    process.env.SUPABASE_SECRET_KEY ??
+    process.env.SUPABASE_SERVICE_KEY;
+  const missing: string[] = [];
+
+  if (!url) missing.push("Supabase URL");
+  if (!serviceKey) missing.push("Supabase server key");
+
+  return {
+    admin:
+      url && serviceKey
+        ? createClient(url, serviceKey, {
+            auth: { autoRefreshToken: false, persistSession: false },
+          })
+        : null,
+    missing,
+  };
 }
 
 export async function POST(request: Request) {
-  const admin = serverClient();
+  const { admin, missing } = serverClient();
   if (!admin) {
     return Response.json(
-      { error: "Supabase server configuration is incomplete." },
+      {
+        error: `Supabase server configuration is incomplete. Missing: ${missing.join(
+          ", ",
+        )}.`,
+      },
       { status: 503 },
     );
   }
