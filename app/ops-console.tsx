@@ -58,11 +58,11 @@ type PublishedReport = {
 const verticalTemplateMeta: Record<string, { filename: string; summary: string }> = {
   "00000000-0000-4000-8000-000000000101": {
     filename: "Vertical 1 - Sourcing and Hiring.xlsx",
-    summary: "Sourcing and Hiring + Background Check sheets / 16 mapped fields",
+    summary: "Sourcing, interview results, Cortex onboarding, background check, and drug test / 17 mapped fields",
   },
   "00000000-0000-4000-8000-000000000102": {
     filename: "Vertical 2 - Orientation and ADP Set-up.xlsx",
-    summary: "Orientation and ADP Set-up / 10 mapped fields",
+    summary: "Orientation, safety standard, ADP payroll, training schedule, and remarks / 13 mapped fields",
   },
   "00000000-0000-4000-8000-000000000103": {
     filename: "Vertical 3 - Training, ORE, and Scheduling.xlsx",
@@ -96,18 +96,18 @@ const reportConfig: Record<"recruiting" | "orientation" | "training", {
 }> = {
   recruiting: {
     title: "Sourcing & Hiring",
-    subtitle: "Candidate movement from initial contact through Amazon portal readiness.",
-    emptyMetrics: [["Contacted from Indeed", 0], ["Reviewed applicants", 0], ["In-person interview", 0], ["Added to Amazon portal", 0], ["Drug tests ordered", 0]],
+    subtitle: "Interview booking, hiring results, Cortex onboarding, background checks, and drug tests.",
+    emptyMetrics: [["Contacted from Indeed", 0], ["Reviewed applicants", 0], ["In-person interview", 0], ["Added to Amazon portal", 0], ["Drug tests ordered", 0], ["Interview passed", 0], ["Interview failed", 0], ["Cortex onboarded", 0]],
   },
   orientation: {
     title: "Orientation & ADP Setup",
-    subtitle: "Onboarding documents, offer letters, and payroll readiness.",
-    emptyMetrics: [["Payroll data collection", 0], ["ID collection", 0], ["Moved to offer letter", 0], ["Ready for ADP", 0]],
+    subtitle: "Orientation completion, safety standards, ADP payroll completion, and training readiness.",
+    emptyMetrics: [["Payroll data collection", 0], ["ID collection", 0], ["Moved to offer letter", 0], ["Ready for ADP", 0], ["Orientation completed", 0], ["ADP setup completed", 0]],
   },
   training: {
     title: "Training, ORE & Work Scheduling",
-    subtitle: "Training readiness, reschedules, and first work deployment.",
-    emptyMetrics: [["Scheduled for training", 0], ["For reschedule", 0], ["Work deployment", 0]],
+    subtitle: "Training outcomes, reschedules, ORE readiness, and first work deployment.",
+    emptyMetrics: [["Scheduled for training", 0], ["Training passed", 0], ["Training failed", 0], ["For reschedule", 0], ["Work deployment", 0]],
   },
 };
 
@@ -178,40 +178,87 @@ function displayDate(value: string | null | undefined) {
     : parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function rowStage(data: SavedRow["data"], page: "recruiting" | "orientation" | "training") {
-  if (page === "recruiting") {
-    if (data.drug_test) return `Drug test: ${data.drug_test}`;
-    if (data.background_check) return `Background: ${data.background_check}`;
-    if (data.interview_result) return `Interview: ${data.interview_result}`;
-    if (data.scheduled_interview) return "Interview scheduled";
-    return "Applicant contacted";
-  }
-  if (page === "orientation") {
-    if (data.adp_section_1_completed) return "Ready for ADP";
-    if (data.adp_section_1_sent) return "ADP Section 1 sent";
-    if (data.orientation_docs_completed) return "Orientation documents complete";
-    return "Document collection";
-  }
-  if (data.work_schedule_plotted) return `Work schedule: ${data.work_schedule_plotted}`;
-  if (data.training_status) return `Training: ${data.training_status}`;
-  if (data.ore_schedule) return "ORE scheduled";
-  return "Training scheduled";
+function hasDisplayValue(value: SavedRow["data"][string]) {
+  return value !== null && value !== undefined && String(value).trim() !== "";
 }
 
-function rowLastUpdate(data: SavedRow["data"], fallback: string) {
-  const candidates = [
-    data.work_schedule_plotted,
-    data.ore_schedule,
-    data.scheduled_training,
-    data.adp_section_1_completed,
-    data.adp_section_1_sent,
-    data.orientation_docs_completed,
-    data.orientation_docs_sent,
-    data.scheduled_interview,
-    data.activity_date,
-  ];
-  const value = candidates.find((candidate) => candidate !== null && candidate !== undefined && String(candidate).trim());
-  return value ? String(value) : displayDate(fallback);
+function mergeReportRows(rows: SavedRow[]) {
+  const merged = new Map<string, SavedRow>();
+  rows.forEach((row) => {
+    const identity = String(
+      row.data.email ??
+        row.data.phone_number ??
+        row.person_name ??
+        `${row.row_type}:${row.source_row ?? row.id}`,
+    )
+      .trim()
+      .toLowerCase();
+    const current = merged.get(identity);
+    if (!current) {
+      merged.set(identity, { ...row, data: { ...row.data } });
+      return;
+    }
+    const nextData = { ...current.data };
+    Object.entries(row.data).forEach(([key, value]) => {
+      if (hasDisplayValue(value)) nextData[key] = value;
+    });
+    merged.set(identity, {
+      ...current,
+      person_name: current.person_name || row.person_name,
+      data: nextData,
+    });
+  });
+  return Array.from(merged.values());
+}
+
+const detailColumns: Record<
+  "recruiting" | "orientation" | "training",
+  { key: string; label: string; date?: boolean; status?: boolean }[]
+> = {
+  recruiting: [
+    { key: "scheduled_interview", label: "Interview booking", date: true },
+    { key: "interview_result", label: "Interview result", status: true },
+    { key: "cortex_onboarded", label: "Cortex onboarded", status: true },
+    { key: "background_check", label: "Background check", status: true },
+    { key: "drug_test", label: "Drug test", status: true },
+  ],
+  orientation: [
+    { key: "orientation_docs_adp_status", label: "Orientation status", status: true },
+    { key: "orientation_completed", label: "Orientation completed", date: true },
+    { key: "adp_payroll_setup", label: "ADP setup", date: true },
+    { key: "adp_payroll_completed", label: "ADP completed", date: true },
+    { key: "training_schedule", label: "Training schedule" },
+    { key: "remarks", label: "Remarks", status: true },
+  ],
+  training: [
+    { key: "training_status", label: "Training status", status: true },
+    { key: "day_1_attendance", label: "Day 1", status: true },
+    { key: "day_2_attendance", label: "Day 2", status: true },
+    { key: "ore_schedule", label: "ORE schedule", date: true },
+    { key: "work_schedule_plotted", label: "Work schedule" },
+  ],
+};
+
+function statusTone(value: SavedRow["data"][string]) {
+  const text = String(value ?? "").toLowerCase();
+  if (/pass|complete|active|onboard|yes|present/.test(text)) return "detail-status-success";
+  if (/fail|off.board|invalid/.test(text)) return "detail-status-danger";
+  if (/resched|pending|progress|incomplete|scheduling|dns/.test(text)) return "detail-status-warning";
+  return "detail-status-neutral";
+}
+
+function DetailValue({
+  value,
+  date,
+  status,
+}: {
+  value: SavedRow["data"][string];
+  date?: boolean;
+  status?: boolean;
+}) {
+  if (!hasDisplayValue(value)) return <span className="detail-empty">Not reported</span>;
+  const text = date ? displayDate(String(value)) : String(value);
+  return status ? <span className={`detail-status ${statusTone(value)}`}>{text}</span> : <span>{text}</span>;
 }
 
 export function OpsConsole() {
@@ -718,10 +765,13 @@ function VerticalReport({ page, reports, onExport }: { page: "recruiting" | "ori
   const config = reportConfig[page];
   const matching = reportsForPage(reports, page);
   const latest = matching[0];
+  const columns = detailColumns[page];
   const metrics: ReportMetric[] = latest
     ? latest.report_metrics.map((item) => [item.metric_label, metricNumber(item)])
     : config.emptyMetrics;
-  const rows = matching.flatMap((report) => report.report_rows.map((row) => ({ report, row }))).slice(0, 100);
+  const rows = matching
+    .flatMap((report) => mergeReportRows(report.report_rows).map((row) => ({ report, row })))
+    .slice(0, 100);
   const recordCount = matching.reduce((sum, report) => sum + report.report_rows.length, 0);
   return (
     <div className="section-grid">
@@ -729,14 +779,18 @@ function VerticalReport({ page, reports, onExport }: { page: "recruiting" | "ori
         <div className="panel-head"><div><h2>{config.title}</h2><p>{config.subtitle}</p></div><ExportControl onExport={onExport} /></div>
         <div className="metric-strip">{metrics.map(([label, value]) => <div className="metric-cell" key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
         <div className="table-wrap">
-          <table className="data-table">
-            <thead><tr><th>Person</th><th>Current stage</th><th>Last update</th><th>Owner</th></tr></thead>
+          <table className="data-table detail-data-table">
+            <thead><tr><th>Person</th>{columns.map((column) => <th key={column.key}>{column.label}</th>)}<th>Report date</th></tr></thead>
             <tbody>
               {rows.map(({ report, row }) => {
                 const detail = String(row.data.email ?? row.data.phone_number ?? row.row_type);
-                return <tr key={`${report.id}:${row.id}`}><td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><div><strong>{row.person_name ?? "Unnamed record"}</strong><div className="small-muted">{detail}</div></div></div></td><td><span className="pill">{rowStage(row.data, page)}</span></td><td>{rowLastUpdate(row.data, report.report_date)}</td><td>VINE Pulse</td></tr>;
+                return <tr key={`${report.id}:${row.id}`}>
+                  <td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><div><strong>{row.person_name ?? "Unnamed record"}</strong><div className="small-muted">{detail}</div></div></div></td>
+                  {columns.map((column) => <td key={column.key}><DetailValue value={row.data[column.key]} date={column.date} status={column.status} /></td>)}
+                  <td>{displayDate(report.report_date)}</td>
+                </tr>;
               })}
-              {!rows.length && <tr><td colSpan={4}><EmptyState title="No report rows yet" copy="Published records for this vertical will appear here." /></td></tr>}
+              {!rows.length && <tr><td colSpan={columns.length + 2}><EmptyState title="No report rows yet" copy="Published records for this vertical will appear here." /></td></tr>}
             </tbody>
           </table>
         </div>
@@ -861,6 +915,22 @@ function EmployeeWorkspace({ client, assignedVerticalId, upload, previewOpen, on
 }
 
 function ExtractionPreview({ upload, onClose, onPublish }: { upload: UploadPreview; onClose: () => void; onPublish: () => void }) {
+  const verticalPage = verticalOptions.find((item) => item.id === upload.verticalId)?.key;
+  const detailPage =
+    verticalPage === "recruiting" || verticalPage === "orientation" || verticalPage === "training"
+      ? verticalPage
+      : null;
+  const columns = detailPage ? detailColumns[detailPage] : [];
+  const previewRows = detailPage
+    ? mergeReportRows(upload.rows.map((row) => ({
+        id: `${row.sheetName}:${row.sourceRow}`,
+        row_type: row.sheetName,
+        person_name: row.personName,
+        data: row.data,
+        source_row: row.sourceRow,
+      })))
+    : [];
+
   return (
     <div className="preview-overlay" role="dialog" aria-modal="true" aria-labelledby="preview-title">
       <section className="preview-dialog">
@@ -870,17 +940,31 @@ function ExtractionPreview({ upload, onClose, onPublish }: { upload: UploadPrevi
         </div>
         <div className="metric-strip">{upload.metrics.map((item) => <div className="metric-cell" key={item.key}><strong>{item.value}</strong><span>{item.label}</span></div>)}</div>
         <div className="table-wrap preview-table">
-          <table className="data-table">
-            <thead><tr><th>Person</th><th>Source sheet</th><th>Extracted details</th></tr></thead>
-            <tbody>{upload.rows.slice(0, 100).map((row) => {
-              const details = Object.entries(row.data)
-                .filter(([, value]) => value !== null && value !== "")
-                .slice(0, 5)
-                .map(([key, value]) => `${key.replaceAll("_", " ")}: ${String(value)}`)
-                .join(" · ");
-              return <tr key={`${row.sheetName}:${row.sourceRow}`}><td><strong>{row.personName}</strong></td><td>{row.sheetName}</td><td className="preview-details">{details}</td></tr>;
-            })}</tbody>
-          </table>
+          {detailPage ? (
+            <table className="data-table detail-data-table">
+              <thead><tr><th>Person</th>{columns.map((column) => <th key={column.key}>{column.label}</th>)}</tr></thead>
+              <tbody>
+                {previewRows.slice(0, 100).map((row) => (
+                  <tr key={row.id}>
+                    <td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><div><strong>{row.person_name ?? "Unnamed record"}</strong><div className="small-muted">{String(row.data.email ?? row.data.phone_number ?? row.row_type)}</div></div></div></td>
+                    {columns.map((column) => <td key={column.key}><DetailValue value={row.data[column.key]} date={column.date} status={column.status} /></td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <table className="data-table">
+              <thead><tr><th>Person</th><th>Source sheet</th><th>Extracted details</th></tr></thead>
+              <tbody>{upload.rows.slice(0, 100).map((row) => {
+                const details = Object.entries(row.data)
+                  .filter(([, value]) => value !== null && value !== "")
+                  .slice(0, 5)
+                  .map(([key, value]) => `${key.replaceAll("_", " ")}: ${String(value)}`)
+                  .join(" · ");
+                return <tr key={`${row.sheetName}:${row.sourceRow}`}><td><strong>{row.personName}</strong></td><td>{row.sheetName}</td><td className="preview-details">{details}</td></tr>;
+              })}</tbody>
+            </table>
+          )}
         </div>
         <div className="preview-dialog-actions"><button className="secondary-btn" onClick={onClose}>Back to upload</button><button className="primary-btn" onClick={onPublish} disabled={upload.published}>{upload.published ? "Already published" : "Publish to client dashboard"}</button></div>
       </section>

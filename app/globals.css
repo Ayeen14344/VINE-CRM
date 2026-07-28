@@ -692,7 +692,7 @@ button {
 
 .metric-strip {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
   gap: 1px;
   margin: 0 20px 20px;
   overflow: hidden;
@@ -744,6 +744,52 @@ button {
   padding: 14px 20px;
   border-top: 1px solid var(--line);
   font-size: 11px;
+}
+
+.detail-data-table {
+  min-width: 980px;
+}
+
+.detail-data-table th,
+.detail-data-table td {
+  white-space: nowrap;
+}
+
+.detail-status,
+.detail-empty {
+  display: inline-flex;
+  align-items: center;
+  min-height: 23px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 760;
+}
+
+.detail-status-success {
+  color: #087653;
+  background: #e7f7f0;
+}
+
+.detail-status-warning {
+  color: #9b6500;
+  background: #fff2d9;
+}
+
+.detail-status-danger {
+  color: #b4232d;
+  background: #fdecec;
+}
+
+.detail-status-neutral {
+  color: #5f5865;
+  background: #f1eeeb;
+}
+
+.detail-empty {
+  color: var(--muted);
+  background: #f7f4f0;
+  font-weight: 650;
 }
 
 .person-cell {
