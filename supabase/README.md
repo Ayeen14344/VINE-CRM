@@ -15,8 +15,6 @@ The migrations create the VINE Pulse multi-DSP data model, row-level security po
 6. Add the public project URL and publishable/anon key to the application environment.
 7. Add the service-role key only as a server-side secret. Never prefix it with `NEXT_PUBLIC_`.
 
-The sanitized `seed.sql` file is for local development or a disposable staging project only. Do not load it into production.
-
 ## First Super Admin
 
 Create the first user in Supabase Auth, then set its `profiles.role` to `super_admin` in the SQL editor. All later users can be created from the VINE Pulse Super Admin workspace.
@@ -31,9 +29,10 @@ Storage is private. Files are delivered only through authenticated downloads or 
 
 ## Migration order
 
-For a new project, apply both migrations in filename order:
+For a new project, apply all migrations in filename order:
 
 1. `20260725023000_initial_vine_pulse.sql`
 2. `20260727090000_dsp_vertical_report_templates.sql`
+3. `20260728230000_vertical_status_visibility.sql`
 
-The second migration stores the exact sheet and column mappings from the four approved vertical workbooks. Employees see only the DSPs assigned to them through `employee_client_assignments`; the existing client row-level-security policy enforces that restriction.
+The second migration stores the sheet and column mappings from the four approved vertical workbooks. The third adds interview outcomes and Cortex onboarding, the new 13-column Orientation and ADP template, and Pass/Fail/Reschedule training status. Employees see only the DSPs assigned to them through `employee_client_assignments`; the existing client row-level-security policy enforces that restriction.
