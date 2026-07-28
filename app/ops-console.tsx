@@ -17,6 +17,8 @@ import {
 type Role = "admin" | "employee" | "client";
 type Page = "overview" | "recruiting" | "orientation" | "training" | "time";
 type Verdict = "pending" | "valid" | "invalid";
+type SignalTone = "success" | "warning" | "danger" | "neutral";
+type ResetScope = "reports" | "workspace";
 type ClientOption = { id: string; company_name: string; primary_email: string };
 type UploadPreview = {
   name: string;
@@ -32,6 +34,15 @@ type UploadPreview = {
 };
 type ReportMetric = [string, number];
 type AdminUser = { name: string; email: string; role: string; assignment: string };
+type ResetResult = {
+  error?: string;
+  details?: string[];
+  reportsDeleted?: number;
+  filesDeleted?: number;
+  usersDeleted?: number;
+  clientsDeleted?: number;
+  warnings?: string[];
+};
 type SavedMetric = {
   metric_key: string;
   metric_label: string;
@@ -239,12 +250,36 @@ const detailColumns: Record<
   ],
 };
 
-function statusTone(value: SavedRow["data"][string]) {
+function signalTone(value: SavedRow["data"][string]): SignalTone {
   const text = String(value ?? "").toLowerCase();
-  if (/pass|complete|active|onboard|yes|present/.test(text)) return "detail-status-success";
-  if (/fail|off.board|invalid/.test(text)) return "detail-status-danger";
-  if (/resched|pending|progress|incomplete|scheduling|dns/.test(text)) return "detail-status-warning";
-  return "detail-status-neutral";
+  if (/fail|off.?board|invalid|violation|absent|time.?theft|missed punch/.test(text)) return "danger";
+  if (/resched|pending|progress|incomplete|not complete|scheduling|dns|half.?day|needs review/.test(text)) return "warning";
+  if (/pass|complete|active|onboard|yes|present|valid|ready/.test(text)) return "success";
+  return "neutral";
+}
+
+function statusTone(value: SavedRow["data"][string]) {
+  return `detail-status-${signalTone(value)}`;
+}
+
+function rowTone(data: SavedRow["data"]): SignalTone {
+  const tones = Object.entries(data)
+    .filter(([key]) => /status|result|attendance|remarks|cortex|background|drug_test|time_theft|violation/.test(key))
+    .map(([, value]) => signalTone(value));
+  if (tones.includes("danger")) return "danger";
+  if (tones.includes("warning")) return "warning";
+  if (tones.includes("success")) return "success";
+  return "neutral";
+}
+
+function metricTone(label: string, value: number | string): SignalTone {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return "neutral";
+  const text = label.toLowerCase();
+  if (/fail|violation|theft|absent|invalid/.test(text)) return "danger";
+  if (/resched|pending|awaiting|missing|missed/.test(text)) return "warning";
+  if (/pass|complete|onboard|ready|scheduled|contacted|reviewed|added/.test(text)) return "success";
+  return "neutral";
 }
 
 function DetailValue({
@@ -259,6 +294,17 @@ function DetailValue({
   if (!hasDisplayValue(value)) return <span className="detail-empty">Not reported</span>;
   const text = date ? displayDate(String(value)) : String(value);
   return status ? <span className={`detail-status ${statusTone(value)}`}>{text}</span> : <span>{text}</span>;
+}
+
+function StatusLegend() {
+  return (
+    <div className="status-legend" aria-label="Report color guide">
+      <span><i className="legend-dot legend-success" />Completed / Passed / Valid</span>
+      <span><i className="legend-dot legend-warning" />Pending / Reschedule / Review</span>
+      <span><i className="legend-dot legend-danger" />Failed / Invalid / Violation</span>
+      <span><i className="legend-dot legend-neutral" />Not reported / Informational</span>
+    </div>
+  );
 }
 
 export function OpsConsole() {
@@ -777,14 +823,15 @@ function VerticalReport({ page, reports, onExport }: { page: "recruiting" | "ori
     <div className="section-grid">
       <section className="panel report-panel">
         <div className="panel-head"><div><h2>{config.title}</h2><p>{config.subtitle}</p></div><ExportControl onExport={onExport} /></div>
-        <div className="metric-strip">{metrics.map(([label, value]) => <div className="metric-cell" key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
+        <div className="metric-strip">{metrics.map(([label, value]) => <div className={`metric-cell metric-tone-${metricTone(label, value)}`} key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
+        <StatusLegend />
         <div className="table-wrap">
           <table className="data-table detail-data-table">
             <thead><tr><th>Person</th>{columns.map((column) => <th key={column.key}>{column.label}</th>)}<th>Report date</th></tr></thead>
             <tbody>
               {rows.map(({ report, row }) => {
                 const detail = String(row.data.email ?? row.data.phone_number ?? row.row_type);
-                return <tr key={`${report.id}:${row.id}`}>
+                return <tr className={`report-row report-row-${rowTone(row.data)}`} key={`${report.id}:${row.id}`}>
                   <td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><div><strong>{row.person_name ?? "Unnamed record"}</strong><div className="small-muted">{detail}</div></div></div></td>
                   {columns.map((column) => <td key={column.key}><DetailValue value={row.data[column.key]} date={column.date} status={column.status} /></td>)}
                   <td>{displayDate(report.report_date)}</td>
@@ -815,14 +862,15 @@ function TimeAttendance({ reports, verdicts, onVerdict }: { reports: PublishedRe
     <div className="section-grid">
       <section className="panel report-panel">
         <div className="panel-head"><div><h2>Time & Attendance</h2><p>Daily exceptions with client validation for potential time theft.</p></div><span className="pill">{awaitingReview} awaiting review</span></div>
-        <div className="metric-strip">{metrics.map(([label, value]) => <div className="metric-cell" key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
+        <div className="metric-strip">{metrics.map(([label, value]) => <div className={`metric-cell metric-tone-${metricTone(label, value)}`} key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
+        <StatusLegend />
         <div className="table-wrap"><table className="data-table"><thead><tr><th>Employee</th><th>Potential time theft</th><th>Date</th><th>Variance</th><th>Client decision</th></tr></thead><tbody>
           {rows.map(({ report, row }) => {
             const verdict = verdicts[row.id] ?? "pending";
             const issue = String(row.data.possible_time_theft ?? (row.data.missed_punch_in || row.data.missed_punch_out ? "Missed punch" : "Attendance record"));
             const detail = `Sign in: ${String(row.data.sign_in_difference ?? "—")} · Sign out: ${String(row.data.sign_out_difference ?? "—")}`;
             const variance = `${String(row.data.sign_in_difference ?? "0")} / ${String(row.data.sign_out_difference ?? "0")}`;
-            return <tr key={row.id}><td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><strong>{row.person_name ?? "Unnamed employee"}</strong></div></td><td><strong>{issue}</strong><div className="small-muted">{detail}</div></td><td>{displayDate(report.report_date)}</td><td>{variance}</td><td><div className="validation-btns"><button className={`valid-btn ${verdict === "valid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "valid")}>Valid</button><button className={`invalid-btn ${verdict === "invalid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "invalid")}>Invalid</button></div></td></tr>;
+            return <tr className={`report-row report-row-${verdict === "invalid" ? "danger" : verdict === "valid" ? "success" : rowTone(row.data)}`} key={row.id}><td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><strong>{row.person_name ?? "Unnamed employee"}</strong></div></td><td><strong>{issue}</strong><div className="small-muted">{detail}</div></td><td>{displayDate(report.report_date)}</td><td>{variance}</td><td><div className="validation-btns"><button className={`valid-btn ${verdict === "valid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "valid")}>Valid</button><button className={`invalid-btn ${verdict === "invalid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "invalid")}>Invalid</button></div></td></tr>;
           })}
           {!rows.length && <tr><td colSpan={5}><EmptyState title="No time and attendance exceptions" copy="Uploaded and published exceptions will appear here for client review." /></td></tr>}
         </tbody></table></div>
@@ -938,14 +986,15 @@ function ExtractionPreview({ upload, onClose, onPublish }: { upload: UploadPrevi
           <div><p className="eyebrow">Client preview · {upload.clientName}</p><h2 id="preview-title">{upload.verticalName}</h2><p>{displayDate(upload.reportDate)} · {upload.rows.length} extracted records</p></div>
           <button className="icon-btn" onClick={onClose} aria-label="Close preview">×</button>
         </div>
-        <div className="metric-strip">{upload.metrics.map((item) => <div className="metric-cell" key={item.key}><strong>{item.value}</strong><span>{item.label}</span></div>)}</div>
+        <div className="metric-strip">{upload.metrics.map((item) => <div className={`metric-cell metric-tone-${metricTone(item.label, item.value)}`} key={item.key}><strong>{item.value}</strong><span>{item.label}</span></div>)}</div>
+        <StatusLegend />
         <div className="table-wrap preview-table">
           {detailPage ? (
             <table className="data-table detail-data-table">
               <thead><tr><th>Person</th>{columns.map((column) => <th key={column.key}>{column.label}</th>)}</tr></thead>
               <tbody>
                 {previewRows.slice(0, 100).map((row) => (
-                  <tr key={row.id}>
+                  <tr className={`report-row report-row-${rowTone(row.data)}`} key={row.id}>
                     <td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><div><strong>{row.person_name ?? "Unnamed record"}</strong><div className="small-muted">{String(row.data.email ?? row.data.phone_number ?? row.row_type)}</div></div></div></td>
                     {columns.map((column) => <td key={column.key}><DetailValue value={row.data[column.key]} date={column.date} status={column.status} /></td>)}
                   </tr>
@@ -976,24 +1025,37 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
   const [clientCompany, setClientCompany] = useState("");
   const [clientEmail, setClientEmail] = useState("");
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [reportsCount, setReportsCount] = useState(0);
+  const [resetScope, setResetScope] = useState<ResetScope | null>(null);
+  const [resetConfirmation, setResetConfirmation] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
   const [userForm, setUserForm] = useState({ fullName: "", email: "", password: "", role: "employee", clientId: clients[0]?.id ?? "", verticalId: verticalOptions[0].id, clientIds: [] as string[] });
   const selectedClientId = userForm.clientId || clients[0]?.id || "";
+  const resetPhrase = resetScope === "workspace" ? "RESET VINE PULSE" : "CLEAR REPORTS";
 
   useEffect(() => {
     if (!supabase || !session) return;
     let active = true;
 
-    supabase
-      .from("profiles")
-      .select("email, full_name, role, client_id, vertical_id")
-      .eq("active", true)
-      .order("created_at")
-      .then(({ data, error }) => {
+    Promise.all([
+      supabase
+        .from("profiles")
+        .select("email, full_name, role, client_id, vertical_id")
+        .eq("active", true)
+        .order("created_at"),
+      supabase
+        .from("reports")
+        .select("id", { count: "exact", head: true }),
+    ]).then(([{ data, error }, { count, error: reportCountError }]) => {
         if (!active) return;
         if (error) {
           onMessage(error.message);
           return;
         }
+        if (reportCountError) {
+          onMessage(reportCountError.message);
+        }
+        setReportsCount(count ?? 0);
         setUsers((data ?? []).map((user) => {
           const vertical = verticalOptions.find((item) => item.id === user.vertical_id);
           const client = clients.find((item) => item.id === user.client_id);
@@ -1055,6 +1117,65 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
     onMessage("User account created.");
   }
 
+  function openReset(scope: ResetScope) {
+    setResetScope(scope);
+    setResetConfirmation("");
+  }
+
+  function closeReset() {
+    if (resetBusy) return;
+    setResetScope(null);
+    setResetConfirmation("");
+  }
+
+  async function performReset() {
+    if (!session || !resetScope || resetConfirmation !== resetPhrase) return;
+    setResetBusy(true);
+
+    try {
+      const response = await fetch("/api/admin/reset", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          scope: resetScope,
+          confirmation: resetConfirmation,
+        }),
+      });
+      const result = await response.json() as ResetResult;
+
+      if (!response.ok) {
+        const details = result.details?.length ? ` ${result.details.join(" ")}` : "";
+        onMessage(`${result.error ?? "The reset could not be completed."}${details}`);
+        return;
+      }
+
+      setReportsCount(0);
+      if (resetScope === "workspace") {
+        onClientsChange([]);
+        setUsers((current) => current.filter((user) => user.email === session.user.email));
+        setUserForm((current) => ({
+          ...current,
+          clientId: "",
+          clientIds: [],
+        }));
+      }
+
+      const summary = resetScope === "workspace"
+        ? `Demo workspace reset: ${result.reportsDeleted ?? 0} reports, ${result.clientsDeleted ?? 0} DSPs, and ${result.usersDeleted ?? 0} users removed.`
+        : `Report data cleared: ${result.reportsDeleted ?? 0} reports and ${result.filesDeleted ?? 0} uploaded files removed.`;
+      onMessage(result.warnings?.length ? `${summary} Storage cleanup needs review.` : summary);
+      setResetScope(null);
+      setResetConfirmation("");
+    } catch {
+      onMessage("The reset request could not reach the server.");
+    } finally {
+      setResetBusy(false);
+    }
+  }
+
   return (
     <>
       <div className="page-heading"><div><p className="eyebrow">System-wide visibility</p><h1>Super Admin command center</h1><p>Create DSP workspaces, issue employee and client accounts, and assign one vertical per employee across selected DSPs.</p></div><span className="pill">5 PM ET daily deadline</span></div>
@@ -1062,7 +1183,7 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
         <Stat index="01" label="Active DSPs" value={String(clients.length)} note="Manually managed workspaces" />
         <Stat index="02" label="Portal users" value={String(users.length)} note="Admins, employees, and clients" />
         <Stat index="03" label="Verticals configured" value="4" note="Production report structures" />
-        <Stat index="04" label="Reports received" value="0" note="No client reports uploaded yet" />
+        <Stat index="04" label="Reports received" value={String(reportsCount)} note={reportsCount ? "Stored report versions" : "No client reports uploaded yet"} />
       </div>
       <div className="admin-form-grid">
         <section className="panel admin-form-panel">
@@ -1095,10 +1216,55 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
           <div className="table-wrap"><table className="data-table"><thead><tr><th>User</th><th>Role</th><th>Access</th></tr></thead><tbody>{users.map((user) => <tr key={user.email}><td><div className="person-cell"><span className="person-avatar">{initials(user.name)}</span><div><strong>{user.name}</strong><div className="small-muted">{user.email}</div></div></div></td><td><span className="pill">{user.role}</span></td><td>{user.assignment}</td></tr>)}{!users.length && <tr><td colSpan={3}><EmptyState title="No portal users found" copy="Create an employee or client login after adding the DSP." /></td></tr>}</tbody></table></div>
         </section>
       </div>
+      <section className="panel danger-zone">
+        <div className="danger-zone-copy">
+          <p className="eyebrow">Demo controls</p>
+          <h3>Clear or reset the practice environment</h3>
+          <p>Report cleanup keeps DSPs and users. A full demo reset removes all DSPs, reports, uploads, assignments, and every user except your currently signed-in Super Admin account.</p>
+        </div>
+        <div className="danger-zone-actions">
+          <button className="secondary-btn warning-action" onClick={() => openReset("reports")}>Clear report data</button>
+          <button className="danger-btn" onClick={() => openReset("workspace")}>Reset demo workspace</button>
+        </div>
+      </section>
       <section className="panel admin-resource-panel">
         <div><p className="eyebrow">Approved resources</p><h3>Vertical report templates</h3><p>The four supplied workbooks are now mapped to their matching employee vertical.</p></div>
         <div className="preview-actions">{verticalOptions.map((vertical, index) => <a className="secondary-btn link-btn" key={vertical.id} href={`/templates/verticals/${encodeURIComponent(verticalTemplateMeta[vertical.id].filename)}`} download>V{index + 1} XLSX</a>)}</div>
       </section>
+      {resetScope && (
+        <div className="preview-overlay" role="dialog" aria-modal="true" aria-labelledby="reset-dialog-title">
+          <section className="preview-dialog reset-dialog">
+            <div className="reset-symbol" aria-hidden="true">!</div>
+            <p className="eyebrow">Super Admin confirmation</p>
+            <h2 id="reset-dialog-title">{resetScope === "workspace" ? "Reset the entire demo workspace?" : "Clear all report data?"}</h2>
+            <p>
+              {resetScope === "workspace"
+                ? "This permanently removes every DSP, uploaded report, report row, assignment, employee, client, and other Super Admin. Your signed-in Super Admin account and the four vertical templates remain."
+                : "This permanently removes all uploaded reports, extracted rows, metrics, review decisions, and source files. DSPs and user accounts remain."}
+            </p>
+            <label className="reset-confirmation">
+              Type <strong>{resetPhrase}</strong> to continue
+              <input
+                autoFocus
+                value={resetConfirmation}
+                onChange={(event) => setResetConfirmation(event.target.value)}
+                placeholder={resetPhrase}
+                autoComplete="off"
+              />
+            </label>
+            <div className="preview-dialog-actions">
+              <button className="secondary-btn" onClick={closeReset} disabled={resetBusy}>Cancel</button>
+              <button
+                className="danger-btn"
+                onClick={performReset}
+                disabled={resetBusy || resetConfirmation !== resetPhrase}
+              >
+                {resetBusy ? "Clearing data…" : resetScope === "workspace" ? "Reset demo workspace" : "Clear all report data"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </>
   );
 }

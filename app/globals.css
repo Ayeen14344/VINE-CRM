@@ -240,7 +240,8 @@ button {
 
 .icon-btn,
 .secondary-btn,
-.primary-btn {
+.primary-btn,
+.danger-btn {
   border: 0;
   border-radius: 10px;
   cursor: pointer;
@@ -250,7 +251,8 @@ button {
 
 .icon-btn:hover,
 .secondary-btn:hover,
-.primary-btn:hover {
+.primary-btn:hover,
+.danger-btn:hover {
   transform: translateY(-1px);
 }
 
@@ -274,6 +276,21 @@ button {
   background: var(--purple);
   box-shadow: 0 8px 20px rgba(78,53,119,.18);
   font-size: 12px;
+}
+
+.danger-btn {
+  padding: 11px 16px;
+  color: #fff;
+  background: #bd2632;
+  box-shadow: 0 8px 20px rgba(189, 38, 50, .18);
+  font-size: 12px;
+}
+
+.danger-btn:disabled,
+.secondary-btn:disabled {
+  cursor: not-allowed;
+  transform: none;
+  opacity: .5;
 }
 
 .content {
@@ -702,8 +719,29 @@ button {
 }
 
 .metric-cell {
+  position: relative;
   padding: 14px;
   background: #fff;
+}
+
+.metric-cell::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  content: "";
+  background: #d8d2dc;
+}
+
+.metric-tone-success::before {
+  background: #16966d;
+}
+
+.metric-tone-warning::before {
+  background: #e2a221;
+}
+
+.metric-tone-danger::before {
+  background: #d84a55;
 }
 
 .metric-cell strong {
@@ -790,6 +828,73 @@ button {
   color: var(--muted);
   background: #f7f4f0;
   font-weight: 650;
+}
+
+.status-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 15px;
+  margin: -5px 20px 16px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.status-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  border-radius: 999px;
+}
+
+.legend-success {
+  background: #16966d;
+}
+
+.legend-warning {
+  background: #e2a221;
+}
+
+.legend-danger {
+  background: #d84a55;
+}
+
+.legend-neutral {
+  background: #aaa1ad;
+}
+
+.report-row > td {
+  transition: background-color .15s ease;
+}
+
+.report-row-success > td {
+  background: rgba(22, 150, 109, .035);
+}
+
+.report-row-warning > td {
+  background: rgba(226, 162, 33, .055);
+}
+
+.report-row-danger > td {
+  background: rgba(216, 74, 85, .055);
+}
+
+.report-row-success > td:first-child {
+  box-shadow: inset 3px 0 #16966d;
+}
+
+.report-row-warning > td:first-child {
+  box-shadow: inset 3px 0 #e2a221;
+}
+
+.report-row-danger > td:first-child {
+  box-shadow: inset 3px 0 #d84a55;
 }
 
 .person-cell {
@@ -1510,6 +1615,108 @@ button {
   grid-row: 1 / span 2;
 }
 
+.danger-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+  padding: 22px;
+  border-color: #efc9cc;
+  background: linear-gradient(135deg, #fffdf9 0%, #fff5f5 100%);
+}
+
+.danger-zone-copy {
+  max-width: 780px;
+}
+
+.danger-zone h3 {
+  margin: 0 0 6px;
+  color: #7f1e27;
+  font-size: 16px;
+  letter-spacing: -.025em;
+}
+
+.danger-zone p:not(.eyebrow) {
+  margin: 0;
+  color: #78666a;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.danger-zone-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 9px;
+}
+
+.warning-action {
+  color: #875800;
+  border-color: #efd69f;
+  background: #fff9e9;
+}
+
+.reset-dialog {
+  width: min(560px, 100%);
+}
+
+.reset-symbol {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  margin-bottom: 17px;
+  place-items: center;
+  border-radius: 14px;
+  color: #fff;
+  background: #bd2632;
+  box-shadow: 0 12px 28px rgba(189, 38, 50, .2);
+  font-size: 22px;
+  font-weight: 850;
+}
+
+.reset-dialog h2 {
+  margin: 0 0 10px;
+  color: #321a1d;
+  font-size: 25px;
+  letter-spacing: -.04em;
+}
+
+.reset-dialog > p:not(.eyebrow) {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.reset-confirmation {
+  display: grid;
+  gap: 8px;
+  margin-top: 21px;
+  color: #665a61;
+  font-size: 10px;
+}
+
+.reset-confirmation strong {
+  color: #98232d;
+  letter-spacing: .035em;
+}
+
+.reset-confirmation input {
+  width: 100%;
+  padding: 12px 13px;
+  border: 1px solid #dfb4b8;
+  border-radius: 10px;
+  outline: none;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+}
+
+.reset-confirmation input:focus {
+  border-color: #bd2632;
+  box-shadow: 0 0 0 3px rgba(189, 38, 50, .1);
+}
+
 .topbar-change-dsp {
   margin-left: 6px;
   white-space: nowrap;
@@ -1888,7 +2095,24 @@ button {
     flex-direction: column;
   }
 
+  .danger-zone {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .danger-zone-actions {
+    flex-direction: column;
+  }
+
+  .danger-zone-actions button {
+    width: 100%;
+  }
+
   .metric-strip {
+    margin-inline: 14px;
+  }
+
+  .status-legend {
     margin-inline: 14px;
   }
 
