@@ -193,10 +193,12 @@ function metric(key: string, label: string, value: number): ExtractedReportMetri
   return { key, label, value };
 }
 
-function createMetrics(verticalId: string, rows: ExtractedReportRow[]): ExtractedReportMetric[] {
+export function createReportMetrics(verticalId: string, rows: ExtractedReportRow[]): ExtractedReportMetric[] {
   if (verticalId.endsWith("0101")) {
-    const sourcing = rows.filter((row) => normalized(row.sheetName).includes("sourcing"));
-    const background = rows.filter((row) => normalized(row.sheetName).includes("background"));
+    const sourcingRows = rows.filter((row) => normalized(row.sheetName).includes("sourcing"));
+    const backgroundRows = rows.filter((row) => normalized(row.sheetName).includes("background"));
+    const sourcing = sourcingRows.length ? sourcingRows : rows;
+    const background = backgroundRows.length ? backgroundRows : rows;
     return [
       metric("contacted_from_indeed", "Contacted from Indeed", sourcing.length),
       metric("reviewed_applicants", "Reviewed Applicants", count(sourcing, (row) => hasValue(row.data.interview_invite_sent) || hasValue(row.data.interview_result))),
@@ -324,5 +326,5 @@ export async function extractReportFromFile(file: File, verticalId: string): Pro
     throw new Error("No report records were found. Keep the template header row and add data beneath it, then upload the file again.");
   }
 
-  return { rows, metrics: createMetrics(verticalId, rows) };
+  return { rows, metrics: createReportMetrics(verticalId, rows) };
 }
