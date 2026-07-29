@@ -2177,3 +2177,382 @@ button {
     width: 100%;
   }
 }
+
+/* In-app vertical report workspace */
+.workspace-sheet {
+  padding: 0;
+  overflow: hidden;
+  margin-bottom: 24px;
+}
+
+.workspace-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 22px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(135deg, #fbfefd, #f1faf7);
+}
+
+.workspace-toolbar label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .02em;
+}
+
+.workspace-toolbar label input {
+  min-width: 170px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  padding: 10px 12px;
+  color: var(--ink);
+}
+
+.workspace-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.formula-notice {
+  padding: 11px 22px;
+  border-bottom: 1px solid #cae8df;
+  background: #eaf8f3;
+  color: #285a4c;
+  font-size: 12px;
+}
+
+.sheet-scroll {
+  overflow: auto;
+  max-height: 620px;
+  background: #fff;
+}
+
+.workspace-grid {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+.workspace-grid th,
+.workspace-grid td {
+  height: 44px;
+  padding: 0;
+  border-right: 1px solid #dce7e3;
+  border-bottom: 1px solid #dce7e3;
+  background: #fff;
+}
+
+.workspace-grid thead th {
+  position: sticky;
+  z-index: 3;
+  top: 0;
+  padding: 10px;
+  background: #15312b;
+  color: #fff;
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: .015em;
+}
+
+.workspace-grid .row-number {
+  position: sticky;
+  z-index: 2;
+  left: 0;
+  width: 48px;
+  min-width: 48px;
+  text-align: center;
+  background: #f2f6f4;
+  color: #6c7e77;
+}
+
+.workspace-grid thead .row-number {
+  z-index: 4;
+  background: #0d251f;
+  color: #d9ebe5;
+}
+
+.workspace-grid input,
+.workspace-grid select {
+  width: 100%;
+  min-width: 100%;
+  height: 43px;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  padding: 8px 10px;
+  color: var(--ink);
+  font: inherit;
+}
+
+.workspace-grid input:focus,
+.workspace-grid select:focus {
+  box-shadow: inset 0 0 0 2px var(--green);
+  background: #f3fcf9;
+}
+
+.workspace-grid .row-action {
+  width: 78px;
+  min-width: 78px;
+  text-align: center;
+}
+
+.workspace-grid .row-action button {
+  border: 0;
+  background: transparent;
+  color: #b04444;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.formula-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 21px;
+  margin-left: 7px;
+  border-radius: 5px;
+  background: #dff7ee;
+  color: #006d50;
+  font-size: 9px;
+}
+
+.formula-cell {
+  padding: 8px 10px !important;
+  font-weight: 800;
+}
+
+.formula-cell span {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 5px 9px;
+}
+
+.formula-danger span {
+  background: #fee8e8;
+  color: #a62929;
+}
+
+.formula-warning span {
+  background: #fff3d8;
+  color: #8c5b00;
+}
+
+.formula-success span {
+  background: #ddf8e9;
+  color: #087747;
+}
+
+.formula-neutral span {
+  background: #eef3f1;
+  color: #53665f;
+}
+
+.sheet-loading {
+  padding: 18px 22px;
+  color: var(--muted);
+}
+
+.workspace-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 12px 22px;
+  background: #f7faf9;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.generated-lists {
+  margin-top: 22px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+}
+
+.generated-lists-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 17px;
+}
+
+.generated-lists-head h3 {
+  margin: 2px 0 4px;
+}
+
+.generated-lists-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.generated-list-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+.generated-list-card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-top: 4px solid #81918b;
+  border-radius: 13px;
+  background: #fcfdfd;
+}
+
+.generated-tone-success {
+  border-top-color: #15a36d;
+}
+
+.generated-tone-warning {
+  border-top-color: #e3a11b;
+}
+
+.generated-tone-danger {
+  border-top-color: #e25454;
+}
+
+.generated-list-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 13px;
+  border-bottom: 1px solid var(--line);
+}
+
+.generated-list-card header span {
+  min-width: 28px;
+  border-radius: 999px;
+  background: #edf3f1;
+  padding: 4px 7px;
+  text-align: center;
+  font-weight: 900;
+}
+
+.generated-list-people {
+  max-height: 230px;
+  overflow: auto;
+  padding: 5px 11px;
+}
+
+.generated-list-people > div {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 8px 2px;
+  border-bottom: 1px solid #edf1ef;
+}
+
+.generated-list-people > div:last-child {
+  border-bottom: 0;
+}
+
+.generated-list-people strong,
+.generated-list-people small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.generated-list-people strong {
+  font-size: 11px;
+}
+
+.generated-list-people small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.mini-avatar {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: #e3f6ef;
+  color: #007b58;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.generated-empty {
+  margin: 0;
+  padding: 15px 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.paste-dialog {
+  max-width: 920px;
+}
+
+.paste-dialog textarea {
+  width: 100%;
+  min-height: 260px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  background: #fbfdfc;
+  color: var(--ink);
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.paste-dialog textarea:focus {
+  outline: 2px solid #8ad9c0;
+  border-color: var(--green);
+}
+
+.paste-column-guide {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  margin-bottom: 11px;
+  padding-bottom: 5px;
+}
+
+.paste-column-guide span {
+  flex: none;
+  border-radius: 7px;
+  background: #edf6f3;
+  padding: 6px 8px;
+  color: #34554a;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+@media (max-width: 760px) {
+  .workspace-toolbar,
+  .generated-lists-head,
+  .workspace-foot {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .workspace-toolbar-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-toolbar-actions button {
+    width: 100%;
+  }
+
+  .generated-lists {
+    padding: 15px;
+  }
+}

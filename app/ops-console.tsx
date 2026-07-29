@@ -13,6 +13,11 @@ import {
   type ExtractedReportMetric,
   type ExtractedReportRow,
 } from "../lib/report-extraction";
+import { workspaceRowsFromSaved } from "../lib/vertical-workspace";
+import {
+  EmployeeDataWorkspace,
+  GeneratedRecordLists,
+} from "./vertical-data-workspace";
 
 type Role = "admin" | "employee" | "client";
 type Page = "overview" | "recruiting" | "orientation" | "training" | "time";
@@ -320,6 +325,12 @@ export function OpsConsole() {
   const [employeeDspId, setEmployeeDspId] = useState<string | null>(null);
   const [publishedReports, setPublishedReports] = useState<PublishedReport[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
+  // Legacy upload support remains available for historical reports, but the
+  // employee UI now uses the in-app workspace below.
+  void previewOpen;
+  void handleUpload;
+  void publishUpload;
+  void EmployeeWorkspace;
 
   const role = roleFromProfile(profile);
   const employeeDsp = clients.find((client) => client.id === employeeDspId);
@@ -640,17 +651,16 @@ export function OpsConsole() {
             />
           ) : role === "employee" ? (
             employeeDsp ? (
-              <EmployeeWorkspace
-                client={employeeDsp}
-                assignedVerticalId={profile?.vertical_id ?? verticalOptions[0].id}
-                upload={upload}
-                previewOpen={previewOpen}
-                onFile={handleUpload}
-                onPreview={() => setPreviewOpen(true)}
-                onClosePreview={() => setPreviewOpen(false)}
-                onPublish={publishUpload}
-                onChangeDsp={() => setEmployeeDspId(null)}
-              />
+              session && profile ? (
+                <EmployeeDataWorkspace
+                  client={employeeDsp}
+                  verticalId={profile.vertical_id ?? verticalOptions[0].id}
+                  verticalName={verticalOptions.find((item) => item.id === profile.vertical_id)?.name ?? verticalOptions[0].name}
+                  profile={profile}
+                  onMessage={setToast}
+                  onChangeDsp={() => setEmployeeDspId(null)}
+                />
+              ) : null
             ) : (
               <DspLanding
                 clients={clients}
@@ -819,6 +829,9 @@ function VerticalReport({ page, reports, onExport }: { page: "recruiting" | "ori
     .flatMap((report) => mergeReportRows(report.report_rows).map((row) => ({ report, row })))
     .slice(0, 100);
   const recordCount = matching.reduce((sum, report) => sum + report.report_rows.length, 0);
+  const generatedRows = latest
+    ? workspaceRowsFromSaved(mergeReportRows(latest.report_rows), latest.vertical_id)
+    : [];
   return (
     <div className="section-grid">
       <section className="panel report-panel">
@@ -841,6 +854,7 @@ function VerticalReport({ page, reports, onExport }: { page: "recruiting" | "ori
             </tbody>
           </table>
         </div>
+        <GeneratedRecordLists verticalId={verticalOptions.find((item) => item.key === page)?.id ?? ""} rows={generatedRows} title="Client operational lists" />
       </section>
       <aside className="side-stack">
         <section className="panel side-panel"><div className="panel-head"><div><h3>30-day activity</h3><p>Published source reports</p></div></div>{matching.length ? <div className="metric-strip compact-metrics"><div className="metric-cell"><strong>{matching.length}</strong><span>reporting days</span></div><div className="metric-cell"><strong>{recordCount}</strong><span>records</span></div></div> : <EmptyState title="No progress data" copy="Progress rates will be calculated after reports are published." />}</section>
@@ -858,6 +872,7 @@ function TimeAttendance({ reports, verdicts, onVerdict }: { reports: PublishedRe
     : [["Missed punches", "0"], ["Missing lunch break", "0"], ["Daily hours violation", "0"], ["7-day rolling", "0"], ["Attendance", "0"], ["Potential time theft", "0"]];
   const rows = matching.flatMap((report) => report.report_rows.map((row) => ({ report, row }))).slice(0, 100);
   const awaitingReview = rows.filter(({ row }) => row.data.possible_time_theft).length;
+  const generatedRows = latest ? workspaceRowsFromSaved(latest.report_rows, latest.vertical_id) : [];
   return (
     <div className="section-grid">
       <section className="panel report-panel">
@@ -874,6 +889,7 @@ function TimeAttendance({ reports, verdicts, onVerdict }: { reports: PublishedRe
           })}
           {!rows.length && <tr><td colSpan={5}><EmptyState title="No time and attendance exceptions" copy="Uploaded and published exceptions will appear here for client review." /></td></tr>}
         </tbody></table></div>
+        <GeneratedRecordLists verticalId={verticalOptions[3].id} rows={generatedRows} title="Client attendance lists" />
       </section>
       <aside className="side-stack"><section className="panel side-panel"><div className="panel-head"><div><h3>Compliance summary</h3><p>Last 30 days</p></div></div><EmptyState title="No compliance data" copy="Compliance rates will be calculated from published reports." /></section><section className="panel side-panel"><div className="panel-head"><div><h3>Decision requirement</h3></div></div><div className="note-box">Invalid and Needs More Information decisions require a client comment. VINE Pulse records the decision-maker and timestamp in the audit history.</div></section></aside>
     </div>
@@ -893,7 +909,7 @@ function DspLanding({ clients, assignedVerticalId, onSelect }: { clients: Client
       <div className="dsp-landing-copy">
         <p className="eyebrow">Employee landing page</p>
         <h1 id="dsp-landing-title">Which DSP are you working on?</h1>
-        <p>Select an assigned delivery service partner before opening the upload workspace. Your active DSP will remain visible at the top of every page.</p>
+        <p>Select an assigned delivery service partner before opening the in-app report workspace. Your active DSP will remain visible at the top of every page.</p>
         <span className="pill">Assigned vertical · {vertical.name}</span>
       </div>
       <div className="panel dsp-picker-panel">
