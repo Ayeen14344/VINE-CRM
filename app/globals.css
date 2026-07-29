@@ -2219,6 +2219,24 @@ button {
   gap: 9px;
 }
 
+.bulk-delete-btn {
+  border: 1px solid #e3adad;
+  border-radius: 10px;
+  background: #fff4f4;
+  padding: 10px 14px;
+  color: #a42e2e;
+  font-size: 11px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.bulk-delete-btn:disabled {
+  border-color: var(--line);
+  background: #f3f5f4;
+  color: #98a39f;
+  cursor: not-allowed;
+}
+
 .formula-notice {
   padding: 11px 22px;
   border-bottom: 1px solid #cae8df;
@@ -2265,7 +2283,7 @@ button {
 .workspace-grid .row-number {
   position: sticky;
   z-index: 2;
-  left: 0;
+  left: 42px;
   width: 48px;
   min-width: 48px;
   text-align: center;
@@ -2277,6 +2295,34 @@ button {
   z-index: 4;
   background: #0d251f;
   color: #d9ebe5;
+}
+
+.workspace-grid .row-select {
+  position: sticky;
+  z-index: 3;
+  left: 0;
+  width: 42px;
+  min-width: 42px;
+  text-align: center;
+  background: #f2f6f4;
+}
+
+.workspace-grid thead .row-select {
+  z-index: 5;
+  background: #0d251f;
+}
+
+.workspace-grid .row-select input {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  accent-color: var(--green);
+}
+
+.workspace-grid tr.selected-row td,
+.workspace-grid tr.selected-row .row-number,
+.workspace-grid tr.selected-row .row-select {
+  background: #e9f8f2;
 }
 
 .workspace-grid input,
@@ -2535,6 +2581,62 @@ button {
   font-weight: 800;
 }
 
+.admin-report-selector {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(260px, 1fr) minmax(260px, 1.2fr);
+  gap: 16px;
+  align-items: end;
+  margin-bottom: 18px;
+  padding: 20px;
+}
+
+.admin-report-selector label {
+  display: grid;
+  gap: 7px;
+}
+
+.admin-report-selector label span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.admin-report-selector select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 11px 12px;
+  color: var(--ink);
+}
+
+.admin-report-access-note {
+  display: grid;
+  gap: 4px;
+  min-height: 61px;
+  align-content: center;
+  border: 1px solid #cfe9df;
+  border-radius: 12px;
+  background: #effaf6;
+  padding: 12px 14px;
+}
+
+.admin-report-access-note strong {
+  color: #087353;
+  font-size: 12px;
+}
+
+.admin-report-access-note span,
+.admin-report-empty p {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.admin-report-empty {
+  padding: 26px;
+}
+
 @media (max-width: 760px) {
   .workspace-toolbar,
   .generated-lists-head,
@@ -2554,5 +2656,9 @@ button {
 
   .generated-lists {
     padding: 15px;
+  }
+
+  .admin-report-selector {
+    grid-template-columns: 1fr;
   }
 }

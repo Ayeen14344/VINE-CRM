@@ -20,7 +20,7 @@ import {
 } from "./vertical-data-workspace";
 
 type Role = "admin" | "employee" | "client";
-type Page = "overview" | "recruiting" | "orientation" | "training" | "time";
+type Page = "overview" | "admin-reports" | "recruiting" | "orientation" | "training" | "time";
 type Verdict = "pending" | "valid" | "invalid";
 type SignalTone = "success" | "warning" | "danger" | "neutral";
 type ResetScope = "reports" | "workspace";
@@ -103,6 +103,11 @@ const navItems: { id: Page; short: string; label: string }[] = [
   { id: "orientation", short: "OA", label: "Orientation & ADP" },
   { id: "training", short: "TR", label: "Training & Scheduling" },
   { id: "time", short: "TA", label: "Time & Attendance" },
+];
+
+const adminNavItems: { id: Page; short: string; label: string }[] = [
+  { id: "overview", short: "SA", label: "Command center" },
+  { id: "admin-reports", short: "AR", label: "All vertical reports" },
 ];
 
 const reportConfig: Record<"recruiting" | "orientation" | "training", {
@@ -409,7 +414,7 @@ export function OpsConsole() {
   }, [role, selectedClient?.id, session]);
 
   const pageTitle = useMemo(() => {
-    if (role === "admin") return "Super Admin command center";
+    if (role === "admin") return page === "admin-reports" ? "All vertical reports" : "Super Admin command center";
     if (role === "employee") return "Employee workspace";
     return page === "overview" ? "Operations overview" : navItems.find((item) => item.id === page)?.label ?? "Operations";
   }, [page, role]);
@@ -608,7 +613,7 @@ export function OpsConsole() {
 
         <div className="nav-label">{role === "admin" ? "Administration" : role === "employee" ? "Client preview" : "Client reports"}</div>
         <nav className="nav">
-          {(role === "admin" ? [{ id: "overview" as Page, short: "SA", label: "Command center" }] : navItems).map((item) => (
+          {(role === "admin" ? adminNavItems : navItems).map((item) => (
             <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => selectPage(item.id)}>
               <span className="nav-icon">{item.short}</span>
               <span className="nav-copy">{item.label}</span>
@@ -643,12 +648,16 @@ export function OpsConsole() {
 
         <div className="content">
           {role === "admin" ? (
-            <AdminWorkspace
-              clients={clients}
-              session={session}
-              onClientsChange={setClients}
-              onMessage={setToast}
-            />
+            page === "admin-reports" && profile ? (
+              <AdminReportAccess clients={clients} profile={profile} onMessage={setToast} />
+            ) : (
+              <AdminWorkspace
+                clients={clients}
+                session={session}
+                onClientsChange={setClients}
+                onMessage={setToast}
+              />
+            )
           ) : role === "employee" ? (
             employeeDsp ? (
               session && profile ? (
@@ -1034,6 +1043,63 @@ function ExtractionPreview({ upload, onClose, onPublish }: { upload: UploadPrevi
         <div className="preview-dialog-actions"><button className="secondary-btn" onClick={onClose}>Back to upload</button><button className="primary-btn" onClick={onPublish} disabled={upload.published}>{upload.published ? "Already published" : "Publish to client dashboard"}</button></div>
       </section>
     </div>
+  );
+}
+
+function AdminReportAccess({ clients, profile, onMessage }: { clients: ClientOption[]; profile: PortalProfile; onMessage: (message: string) => void }) {
+  const [clientId, setClientId] = useState("");
+  const [verticalId, setVerticalId] = useState(verticalOptions[0].id);
+  const selectedClient = clients.find((client) => client.id === clientId) ?? clients[0];
+  const selectedVertical = verticalOptions.find((vertical) => vertical.id === verticalId) ?? verticalOptions[0];
+
+  if (!selectedClient) {
+    return (
+      <section className="panel admin-report-empty">
+        <p className="eyebrow">Super Admin report access</p>
+        <h1>Add a DSP before opening vertical reports</h1>
+        <p>Create your first client in the Command center, then return here to view and update every vertical.</p>
+      </section>
+    );
+  }
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">Super Admin + employee access</p>
+          <h1>All vertical report workspaces</h1>
+          <p>Select any DSP and any vertical to review, paste, edit, bulk delete, or publish report records.</p>
+        </div>
+        <span className="pill">Full operational access</span>
+      </div>
+      <section className="panel admin-report-selector">
+        <label>
+          <span>DSP / Client</span>
+          <select value={selectedClient.id} onChange={(event) => setClientId(event.target.value)}>
+            {clients.map((client) => <option value={client.id} key={client.id}>{client.company_name}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Vertical report</span>
+          <select value={selectedVertical.id} onChange={(event) => setVerticalId(event.target.value)}>
+            {verticalOptions.map((vertical) => <option value={vertical.id} key={vertical.id}>{vertical.name}</option>)}
+          </select>
+        </label>
+        <div className="admin-report-access-note">
+          <strong>Super Admin access</strong>
+          <span>You can work on every client and vertical without changing employee assignments.</span>
+        </div>
+      </section>
+      <EmployeeDataWorkspace
+        client={selectedClient}
+        verticalId={selectedVertical.id}
+        verticalName={selectedVertical.name}
+        profile={profile}
+        onMessage={onMessage}
+        onChangeDsp={() => undefined}
+        showChangeDsp={false}
+      />
+    </>
   );
 }
 

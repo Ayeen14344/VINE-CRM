@@ -84,6 +84,7 @@ export function EmployeeDataWorkspace({
   verticalName,
   onChangeDsp,
   onMessage,
+  showChangeDsp = true,
 }: {
   client: ClientOption;
   verticalId: string;
@@ -91,6 +92,7 @@ export function EmployeeDataWorkspace({
   verticalName: string;
   onChangeDsp: () => void;
   onMessage: (message: string) => void;
+  showChangeDsp?: boolean;
 }) {
   const [reportDate, setReportDate] = useState(new Date().toISOString().slice(0, 10));
   const [rows, setRows] = useState<WorkspaceRow[]>([emptyWorkspaceRow()]);
@@ -99,8 +101,10 @@ export function EmployeeDataWorkspace({
   const [latestVersion, setLatestVersion] = useState(0);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const columns = gridColumns[verticalId] ?? [];
   const calculatedFields = columns.filter((column) => column.kind === "formula").map((column) => column.label);
+  const allRowsSelected = rows.length > 0 && rows.every((row) => selectedRows.has(row.id));
 
   useEffect(() => {
     if (!supabase) return;
@@ -125,6 +129,7 @@ export function EmployeeDataWorkspace({
         setRows(saved.length ? workspaceRowsFromSaved(saved, verticalId) : [emptyWorkspaceRow()]);
         setLatestVersion(Number(data?.version ?? 0));
       }
+      setSelectedRows(new Set());
       setLoading(false);
     })();
     return () => { active = false; };
@@ -161,9 +166,33 @@ export function EmployeeDataWorkspace({
     onMessage(`${parsed.length} row${parsed.length === 1 ? "" : "s"} pasted into the workspace.`);
   };
 
+  const toggleRow = (rowId: string) => {
+    setSelectedRows((current) => {
+      const next = new Set(current);
+      if (next.has(rowId)) next.delete(rowId);
+      else next.add(rowId);
+      return next;
+    });
+  };
+
+  const toggleAllRows = () => {
+    setSelectedRows(allRowsSelected ? new Set() : new Set(rows.map((row) => row.id)));
+  };
+
+  const deleteSelectedRows = () => {
+    const count = selectedRows.size;
+    if (!count) return;
+    setRows((current) => {
+      const remaining = current.filter((row) => !selectedRows.has(row.id));
+      return remaining.length ? remaining : [emptyWorkspaceRow()];
+    });
+    setSelectedRows(new Set());
+    onMessage(`${count} selected row${count === 1 ? "" : "s"} removed. Save the update to publish this change to the client.`);
+  };
+
   const saveUpdate = async () => {
     if (!supabase) return;
-    if (!realRows.length) {
+    if (!realRows.length && !latestVersion) {
       onMessage("Add at least one driver or candidate before saving.");
       return;
     }
@@ -200,13 +229,15 @@ export function EmployeeDataWorkspace({
       return;
     }
 
-    const { error: rowsError } = await supabase.from("report_rows").insert(realRows.map((row) => ({
-      report_id: report.id,
-      row_type: row.sheetName,
-      person_name: row.personName,
-      source_row: row.sourceRow,
-      data: row.data,
-    })));
+    const { error: rowsError } = realRows.length
+      ? await supabase.from("report_rows").insert(realRows.map((row) => ({
+          report_id: report.id,
+          row_type: row.sheetName,
+          person_name: row.personName,
+          source_row: row.sourceRow,
+          data: row.data,
+        })))
+      : { error: null };
     const { error: metricsError } = metrics.length
       ? await supabase.from("report_metrics").insert(metrics.map((item) => ({
           report_id: report.id,
@@ -231,7 +262,7 @@ export function EmployeeDataWorkspace({
     <>
       <div className="active-dsp-banner">
         <div><span className="client-avatar">{initials(client.company_name)}</span><div><span>Currently working on</span><strong>{client.company_name}</strong></div></div>
-        <button className="secondary-btn" onClick={onChangeDsp}>Change DSP</button>
+        {showChangeDsp && <button className="secondary-btn" onClick={onChangeDsp}>Change DSP</button>}
       </div>
       <div className="page-heading">
         <div>
@@ -248,6 +279,7 @@ export function EmployeeDataWorkspace({
           <div className="workspace-toolbar-actions">
             <button className="secondary-btn" onClick={() => setRows((current) => [...current, emptyWorkspaceRow()])}>+ Add row</button>
             <button className="secondary-btn" onClick={() => setPasteOpen(true)}>Paste Excel rows</button>
+            <button className="bulk-delete-btn" disabled={!selectedRows.size} onClick={deleteSelectedRows}>Delete selected{selectedRows.size ? ` (${selectedRows.size})` : ""}</button>
             <button className="primary-btn" disabled={saving || loading} onClick={saveUpdate}>{saving ? "Saving…" : "Save & update client"}</button>
           </div>
         </div>
@@ -256,10 +288,11 @@ export function EmployeeDataWorkspace({
         )}
         <div className="sheet-scroll">
           <table className="workspace-grid">
-            <thead><tr><th className="row-number">#</th>{columns.map((column) => <th style={{ minWidth: column.width ?? 150 }} key={column.key}>{column.label}{column.kind === "formula" && <span className="formula-badge">fx</span>}</th>)}<th className="row-action">Action</th></tr></thead>
+            <thead><tr><th className="row-select"><input type="checkbox" checked={allRowsSelected} onChange={toggleAllRows} aria-label="Select all report rows" /></th><th className="row-number">#</th>{columns.map((column) => <th style={{ minWidth: column.width ?? 150 }} key={column.key}>{column.label}{column.kind === "formula" && <span className="formula-badge">fx</span>}</th>)}<th className="row-action">Action</th></tr></thead>
             <tbody>
               {rows.map((row, index) => (
-                <tr key={row.id}>
+                <tr className={selectedRows.has(row.id) ? "selected-row" : ""} key={row.id}>
+                  <td className="row-select"><input type="checkbox" checked={selectedRows.has(row.id)} onChange={() => toggleRow(row.id)} aria-label={`Select row ${index + 1}`} /></td>
                   <th className="row-number">{index + 1}</th>
                   {columns.map((column) => {
                     const value = valueText(row.data[column.key]);
@@ -271,7 +304,14 @@ export function EmployeeDataWorkspace({
                     }
                     return <td key={column.key}><input type={column.kind === "date" ? "date" : column.kind === "time" ? "time" : "text"} value={value} onChange={(event) => updateCell(row.id, column.key, event.target.value)} /></td>;
                   })}
-                  <td className="row-action"><button aria-label={`Delete row ${index + 1}`} onClick={() => setRows((current) => current.length === 1 ? [emptyWorkspaceRow()] : current.filter((item) => item.id !== row.id))}>Delete</button></td>
+                  <td className="row-action"><button aria-label={`Delete row ${index + 1}`} onClick={() => {
+                    setRows((current) => current.length === 1 ? [emptyWorkspaceRow()] : current.filter((item) => item.id !== row.id));
+                    setSelectedRows((current) => {
+                      const next = new Set(current);
+                      next.delete(row.id);
+                      return next;
+                    });
+                  }}>Delete</button></td>
                 </tr>
               ))}
             </tbody>
@@ -281,7 +321,7 @@ export function EmployeeDataWorkspace({
         <div className="workspace-foot"><span>{realRows.length} report record{realRows.length === 1 ? "" : "s"}</span><span>Saving creates a new audit-safe version; earlier versions remain in the 30-day history.</span></div>
       </section>
 
-      <GeneratedRecordLists verticalId={verticalId} rows={rows.map((row) => normalizeWorkspaceRow(row, verticalId))} title="Employee report views" />
+      <GeneratedRecordLists verticalId={verticalId} rows={rows.map((row) => normalizeWorkspaceRow(row, verticalId))} title={profile.role === "super_admin" ? "Super Admin report views" : "Employee report views"} />
 
       {pasteOpen && (
         <div className="preview-overlay" role="dialog" aria-modal="true" aria-labelledby="paste-title">
