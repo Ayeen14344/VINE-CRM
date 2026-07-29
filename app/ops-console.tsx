@@ -20,10 +20,11 @@ import {
 } from "./vertical-data-workspace";
 
 type Role = "admin" | "employee" | "client";
-type Page = "overview" | "admin-reports" | "recruiting" | "orientation" | "training" | "time";
+type Page = "overview" | "admin-reports" | "admin-client-view" | "recruiting" | "orientation" | "training" | "time";
 type Verdict = "pending" | "valid" | "invalid";
 type SignalTone = "success" | "warning" | "danger" | "neutral";
 type ResetScope = "reports" | "workspace";
+type ExportFormat = "csv" | "xlsx" | "pdf" | "png" | "jpeg";
 type ClientOption = { id: string; company_name: string; primary_email: string };
 type UploadPreview = {
   name: string;
@@ -108,6 +109,7 @@ const navItems: { id: Page; short: string; label: string }[] = [
 const adminNavItems: { id: Page; short: string; label: string }[] = [
   { id: "overview", short: "SA", label: "Command center" },
   { id: "admin-reports", short: "AR", label: "All vertical reports" },
+  { id: "admin-client-view", short: "CV", label: "Client view" },
 ];
 
 const reportConfig: Record<"recruiting" | "orientation" | "training", {
@@ -189,6 +191,52 @@ function buildVerticalCards(reports: PublishedReport[]) {
       tone: latest ? "ok" : "review",
     };
   });
+}
+
+async function exportDashboardData(reports: PublishedReport[], clientName: string, format: ExportFormat) {
+  const cards = buildVerticalCards(reports);
+  const rows = [
+    ["Vertical", "Today", "Rolling 30 Days", "Status"],
+    ...cards.map((item) => [item.title, item.today, item.month, item.status]),
+  ];
+  const basename = `VINE-Pulse-${clientName.replace(/\s+/g, "-")}-30-day-report`;
+
+  if (format === "csv") {
+    const csv = rows.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\r\n");
+    downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), `${basename}.csv`);
+    return;
+  }
+  if (format === "xlsx") {
+    const XLSX = await import("xlsx");
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), "30-Day Summary");
+    XLSX.writeFile(book, `${basename}.xlsx`);
+    return;
+  }
+  if (format === "pdf") {
+    const [{ jsPDF }, autoTableModule] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
+    const doc = new jsPDF({ orientation: "landscape" });
+    doc.setFontSize(20);
+    doc.setTextColor(20, 38, 58);
+    doc.text("VINE Pulse", 14, 18);
+    doc.setFontSize(10);
+    doc.setTextColor(0, 140, 99);
+    doc.text(`${clientName} | Rolling 30-day operations report`, 14, 25);
+    autoTableModule.default(doc, { head: [rows[0]], body: rows.slice(1), startY: 32, theme: "striped", headStyles: { fillColor: [0, 140, 99] } });
+    doc.save(`${basename}.pdf`);
+    return;
+  }
+
+  const target = document.querySelector<HTMLElement>("[data-export-region]");
+  if (!target) return;
+  const image = await import("html-to-image");
+  const dataUrl = format === "png"
+    ? await image.toPng(target, { backgroundColor: "#F5F7F6", pixelRatio: 2 })
+    : await image.toJpeg(target, { backgroundColor: "#F5F7F6", pixelRatio: 2, quality: 0.92 });
+  const anchor = document.createElement("a");
+  anchor.download = `${basename}.${format}`;
+  anchor.href = dataUrl;
+  anchor.click();
 }
 
 function displayDate(value: string | null | undefined) {
@@ -343,8 +391,6 @@ export function OpsConsole() {
     ? employeeDsp
     : clients.find((client) => client.id === profile?.client_id) ?? clients[0];
   const clientName = selectedClient?.company_name ?? (role === "employee" ? "Choose a DSP" : "Client workspace");
-  const verticalCards = useMemo(() => buildVerticalCards(publishedReports), [publishedReports]);
-
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(""), 3400);
@@ -414,7 +460,11 @@ export function OpsConsole() {
   }, [role, selectedClient?.id, session]);
 
   const pageTitle = useMemo(() => {
-    if (role === "admin") return page === "admin-reports" ? "All vertical reports" : "Super Admin command center";
+    if (role === "admin") {
+      if (page === "admin-reports") return "All vertical reports";
+      if (page === "admin-client-view") return "Client view";
+      return "Super Admin command center";
+    }
     if (role === "employee") return "Employee workspace";
     return page === "overview" ? "Operations overview" : navItems.find((item) => item.id === page)?.label ?? "Operations";
   }, [page, role]);
@@ -547,44 +597,8 @@ export function OpsConsole() {
     setToast("Daily report published to the client dashboard.");
   }
 
-  async function exportDashboard(format: "csv" | "xlsx" | "pdf" | "png" | "jpeg") {
-    const rows = [
-      ["Vertical", "Today", "Rolling 30 Days", "Status"],
-      ...verticalCards.map((item) => [item.title, item.today, item.month, item.status]),
-    ];
-    const basename = `VINE-Pulse-${clientName.replace(/\s+/g, "-")}-30-day-report`;
-
-    if (format === "csv") {
-      const csv = rows.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\r\n");
-      downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), `${basename}.csv`);
-    } else if (format === "xlsx") {
-      const XLSX = await import("xlsx");
-      const book = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), "30-Day Summary");
-      XLSX.writeFile(book, `${basename}.xlsx`);
-    } else if (format === "pdf") {
-      const [{ jsPDF }, autoTableModule] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
-      const doc = new jsPDF({ orientation: "landscape" });
-      doc.setFontSize(20);
-      doc.setTextColor(20, 38, 58);
-      doc.text("VINE Pulse", 14, 18);
-      doc.setFontSize(10);
-      doc.setTextColor(0, 140, 99);
-      doc.text(`${clientName} | Rolling 30-day operations report`, 14, 25);
-      autoTableModule.default(doc, { head: [rows[0]], body: rows.slice(1), startY: 32, theme: "striped", headStyles: { fillColor: [0, 140, 99] } });
-      doc.save(`${basename}.pdf`);
-    } else {
-      const target = document.querySelector<HTMLElement>("[data-export-region]");
-      if (!target) return;
-      const image = await import("html-to-image");
-      const dataUrl = format === "png"
-        ? await image.toPng(target, { backgroundColor: "#F5F7F6", pixelRatio: 2 })
-        : await image.toJpeg(target, { backgroundColor: "#F5F7F6", pixelRatio: 2, quality: 0.92 });
-      const anchor = document.createElement("a");
-      anchor.download = `${basename}.${format}`;
-      anchor.href = dataUrl;
-      anchor.click();
-    }
+  async function exportDashboard(format: ExportFormat) {
+    await exportDashboardData(publishedReports, clientName, format);
     setToast(`${format.toUpperCase()} export prepared.`);
   }
 
@@ -650,6 +664,8 @@ export function OpsConsole() {
           {role === "admin" ? (
             page === "admin-reports" && profile ? (
               <AdminReportAccess clients={clients} profile={profile} onMessage={setToast} />
+            ) : page === "admin-client-view" ? (
+              <AdminClientView clients={clients} onMessage={setToast} />
             ) : (
               <AdminWorkspace
                 clients={clients}
@@ -761,7 +777,7 @@ function LoginScreen({ onMessage }: { onMessage: (message: string) => void }) {
   );
 }
 
-function ExportControl({ onExport }: { onExport: (format: "csv" | "xlsx" | "pdf" | "png" | "jpeg") => void }) {
+function ExportControl({ onExport }: { onExport: (format: ExportFormat) => void }) {
   return (
     <select className="export-select" defaultValue="" onChange={(event) => {
       if (event.target.value) onExport(event.target.value as "csv" | "xlsx" | "pdf" | "png" | "jpeg");
@@ -826,7 +842,7 @@ function Stat({ index, label, value, note }: { index: string; label: string; val
   return <div className="stat-card"><div className="stat-top"><span>{label}</span><span className="stat-index">{index}</span></div><div className="stat-value"><strong>{value}</strong></div><p>{note}</p></div>;
 }
 
-function VerticalReport({ page, reports, onExport }: { page: "recruiting" | "orientation" | "training"; reports: PublishedReport[]; onExport: (format: "csv" | "xlsx" | "pdf" | "png" | "jpeg") => void }) {
+function VerticalReport({ page, reports, onExport }: { page: "recruiting" | "orientation" | "training"; reports: PublishedReport[]; onExport: (format: ExportFormat) => void }) {
   const config = reportConfig[page];
   const matching = reportsForPage(reports, page);
   const latest = matching[0];
@@ -1043,6 +1059,166 @@ function ExtractionPreview({ upload, onClose, onPublish }: { upload: UploadPrevi
         <div className="preview-dialog-actions"><button className="secondary-btn" onClick={onClose}>Back to upload</button><button className="primary-btn" onClick={onPublish} disabled={upload.published}>{upload.published ? "Already published" : "Publish to client dashboard"}</button></div>
       </section>
     </div>
+  );
+}
+
+function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMessage: (message: string) => void }) {
+  const [clientId, setClientId] = useState("");
+  const [clientPage, setClientPage] = useState<Page>("overview");
+  const [reports, setReports] = useState<PublishedReport[]>([]);
+  const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({});
+  const [loading, setLoading] = useState(true);
+  const selectedClient = clients.find((client) => client.id === clientId) ?? clients[0];
+
+  useEffect(() => {
+    if (!supabase || !selectedClient?.id) return;
+    const selectedClientId = selectedClient.id;
+    const portalClient = supabase;
+    let active = true;
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 29);
+
+    async function loadClientReports() {
+      const { data, error } = await portalClient
+        .from("reports")
+        .select("id, vertical_id, report_date, version, published_at, report_metrics(metric_key, metric_label, numeric_value, text_value), report_rows(id, row_type, person_name, data, source_row)")
+        .eq("client_id", selectedClientId)
+        .eq("status", "published")
+        .gte("report_date", startDate.toISOString().slice(0, 10))
+        .order("report_date", { ascending: false })
+        .order("version", { ascending: false });
+      if (!active) return;
+      setLoading(false);
+      if (error) {
+        setReports([]);
+        onMessage(`Client reports could not be loaded: ${error.message}`);
+        return;
+      }
+      setReports(dedupePublishedReports((data ?? []) as unknown as PublishedReport[]));
+    }
+
+    loadClientReports();
+    const refreshTimer = window.setInterval(loadClientReports, 30000);
+    return () => {
+      active = false;
+      window.clearInterval(refreshTimer);
+    };
+  }, [selectedClient?.id, onMessage]);
+
+  if (!selectedClient) {
+    return (
+      <section className="panel admin-report-empty">
+        <p className="eyebrow">Super Admin + client access</p>
+        <h1>Add a DSP before opening the client view</h1>
+        <p>Create your first client in the Command center, then return here to see its published dashboard.</p>
+      </section>
+    );
+  }
+
+  const clientPageTitle = clientPage === "overview"
+    ? "Operations overview"
+    : navItems.find((item) => item.id === clientPage)?.label ?? "Operations";
+
+  async function exportClientDashboard(format: ExportFormat) {
+    try {
+      await exportDashboardData(reports, selectedClient.company_name, format);
+      onMessage(`${format.toUpperCase()} export prepared.`);
+    } catch (error) {
+      onMessage(error instanceof Error ? error.message : "The export could not be prepared.");
+    }
+  }
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">Super Admin + client access</p>
+          <h1>Client dashboard view</h1>
+          <p>Select any DSP to see the same published 30-day dashboard and vertical reports available to that client.</p>
+        </div>
+        <span className="pill">Published client data</span>
+      </div>
+      <section className="panel admin-report-selector admin-client-selector">
+        <label>
+          <span>DSP / Client</span>
+          <select
+            value={selectedClient.id}
+            onChange={(event) => {
+              setLoading(true);
+              setClientId(event.target.value);
+              setClientPage("overview");
+              setVerdicts({});
+            }}
+          >
+            {clients.map((client) => <option value={client.id} key={client.id}>{client.company_name}</option>)}
+          </select>
+        </label>
+        <div className="admin-report-access-note">
+          <strong>Viewing as {selectedClient.company_name}</strong>
+          <span>This preview only shows reports published to this DSP during the latest 30 days.</span>
+        </div>
+      </section>
+
+      <section className="admin-client-frame">
+        <div className="admin-client-context">
+          <div>
+            <span className="client-avatar">{initials(selectedClient.company_name)}</span>
+            <div>
+              <small>Client dashboard preview</small>
+              <strong>{selectedClient.company_name}</strong>
+            </div>
+          </div>
+          <span className="pill">Super Admin viewing as client</span>
+        </div>
+        <nav className="admin-client-nav" aria-label={`${selectedClient.company_name} client report navigation`}>
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              className={clientPage === item.id ? "active" : ""}
+              onClick={() => setClientPage(item.id)}
+            >
+              <span>{item.short}</span>
+              {item.label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="admin-client-dashboard" data-export-region>
+          <div className="page-heading admin-client-heading">
+            <div>
+              <p className="eyebrow">{selectedClient.company_name} · Daily report</p>
+              <h1>{clientPageTitle}</h1>
+              <p>{clientPage === "overview" ? "Summary totals across all four verticals for the rolling 30-day period." : "Daily activity, current pipeline, and published operational details for this vertical."}</p>
+            </div>
+            <div className="heading-actions">
+              <div className="date-control"><span className="live-dot" /><span>Latest 30 days</span></div>
+              <ExportControl onExport={exportClientDashboard} />
+            </div>
+          </div>
+
+          {loading ? (
+            <section className="panel admin-client-loading"><span className="pulse-loader" /><strong>Loading {selectedClient.company_name}&apos;s published reports…</strong></section>
+          ) : (
+            <>
+              {clientPage === "overview" && <Overview onOpen={setClientPage} reports={reports} />}
+              {(clientPage === "recruiting" || clientPage === "orientation" || clientPage === "training") && (
+                <VerticalReport page={clientPage} reports={reports} onExport={exportClientDashboard} />
+              )}
+              {clientPage === "time" && (
+                <TimeAttendance
+                  reports={reports}
+                  verdicts={verdicts}
+                  onVerdict={(id, verdict) => {
+                    setVerdicts((current) => ({ ...current, [id]: verdict }));
+                    onMessage(`Time-theft item marked ${verdict} in the client preview.`);
+                  }}
+                />
+              )}
+            </>
+          )}
+        </div>
+      </section>
+    </>
   );
 }
 
