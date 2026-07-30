@@ -347,6 +347,35 @@ button {
   font-weight: 680;
 }
 
+.report-day-control {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 7px 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255,255,255,.82);
+  white-space: nowrap;
+}
+
+.report-day-control > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.report-day-control select {
+  max-width: 178px;
+  padding: 5px 27px 5px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: #f4f8f6;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 760;
+  outline: none;
+}
+
 .live-dot {
   width: 7px;
   height: 7px;
@@ -844,6 +873,37 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.report-detail-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 20px 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fbfa;
+}
+
+.report-detail-toolbar strong,
+.report-detail-toolbar span {
+  display: block;
+}
+
+.report-detail-toolbar strong {
+  font-size: 11px;
+}
+
+.report-detail-toolbar span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.report-detail-toolbar .secondary-btn {
+  flex: 0 0 auto;
 }
 
 .legend-dot {
@@ -2093,6 +2153,26 @@ button {
 
   .heading-actions > * {
     flex: 1;
+  }
+
+  .report-day-control {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .report-day-control select {
+    max-width: none;
+    flex: 1;
+  }
+
+  .report-detail-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    margin-inline: 14px;
+  }
+
+  .report-detail-toolbar .secondary-btn {
+    width: 100%;
   }
 
   .admin-resource-panel {
