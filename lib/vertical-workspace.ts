@@ -86,6 +86,7 @@ export const gridColumns: Record<string, GridColumn[]> = {
     { key: "missed_punch_out_status", label: "Punch Out Status", kind: "select", options: timeStatuses, width: 155 },
     { key: "possible_time_theft", label: "Possible Time Theft", kind: "formula", width: 175 },
     { key: "sent_to_dispatch", label: "Sent To Dispatch", kind: "select", options: yesNo, width: 155 },
+    { key: "comments", label: "Comments", width: 240 },
   ],
 };
 
@@ -115,15 +116,60 @@ export function emptyWorkspaceRow(): WorkspaceRow {
   return { id: newId(), personName: "", data: {} };
 }
 
-function excelDate(value: string) {
-  const numeric = Number(value);
+function validDateParts(year: number, month: number, day: number) {
+  if (year < 1900 || year > 2200 || month < 1 || month > 12 || day < 1 || day > 31) return false;
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  return candidate.getUTCFullYear() === year && candidate.getUTCMonth() === month - 1 && candidate.getUTCDate() === day;
+}
+
+function dateParts(year: number, month: number, day: number) {
+  if (!validDateParts(year, month, day)) return "";
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+export function normalizePastedDate(value: ExtractedValue) {
+  const raw = text(value)
+    .replace(/^["']|["']$/g, "")
+    .replace(/\u00a0/g, " ")
+    .trim();
+  if (!raw) return "";
+
+  const numeric = Number(raw);
   if (Number.isFinite(numeric) && numeric >= 25000 && numeric <= 80000) {
-    const date = new Date(Date.UTC(1899, 11, 30) + numeric * 86400000);
+    const date = new Date(Date.UTC(1899, 11, 30) + Math.floor(numeric) * 86400000);
     return date.toISOString().slice(0, 10);
   }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-  const match = value.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-  return match ? `${match[3]}-${match[1].padStart(2, "0")}-${match[2].padStart(2, "0")}` : value;
+
+  const iso = raw.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:[T\s]|$)/);
+  if (iso) {
+    const normalizedIso = dateParts(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+    if (normalizedIso) return normalizedIso;
+  }
+
+  const numericDate = raw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2}|\d{4})(?:\s|$)/);
+  if (numericDate) {
+    const first = Number(numericDate[1]);
+    const second = Number(numericDate[2]);
+    const shortYear = Number(numericDate[3]);
+    const year = numericDate[3].length === 2
+      ? (shortYear >= 70 ? 1900 + shortYear : 2000 + shortYear)
+      : shortYear;
+    // VINE Pulse reports use US month/day/year. If the first value is above
+    // 12, safely recognize it as a day/month/year value instead.
+    const month = first > 12 && second <= 12 ? second : first;
+    const day = first > 12 && second <= 12 ? first : second;
+    const normalizedNumericDate = dateParts(year, month, day);
+    if (normalizedNumericDate) return normalizedNumericDate;
+  }
+
+  if (/[a-z]/i.test(raw)) {
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.valueOf())) {
+      return dateParts(parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate());
+    }
+  }
+
+  return "";
 }
 
 function timeFraction(value: ExtractedValue): number | null {
@@ -187,7 +233,7 @@ export function normalizeWorkspaceRow(row: WorkspaceRow, verticalId: string) {
   const normalizedData = { ...row.data };
   (gridColumns[verticalId] ?? []).forEach((column) => {
     if (column.kind === "date" && normalizedData[column.key]) {
-      normalizedData[column.key] = excelDate(text(normalizedData[column.key]));
+      normalizedData[column.key] = normalizePastedDate(normalizedData[column.key]) || normalizedData[column.key];
     }
     if (column.kind === "time" && normalizedData[column.key]) {
       normalizedData[column.key] = inputTime(normalizedData[column.key]);
@@ -220,7 +266,7 @@ export function parsePastedRows(raw: string, verticalId: string): WorkspaceRow[]
       const sourceIndex = includesFormulaSlots ? index : editableIndex;
       editableIndex += 1;
       let value = cells[sourceIndex]?.trim() ?? "";
-      if (column.kind === "date") value = excelDate(value);
+      if (column.kind === "date") value = normalizePastedDate(value);
       data[column.key] = value || null;
     });
     return normalizeWorkspaceRow({ id: newId(), personName: "", data }, verticalId);
