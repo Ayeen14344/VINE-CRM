@@ -7,6 +7,7 @@ import {
   emptyWorkspaceRow,
   generatedGroups,
   gridColumns,
+  normalizePastedDate,
   normalizeWorkspaceRow,
   parsePastedRows,
   toExtractedRows,
@@ -149,6 +150,18 @@ export function EmployeeDataWorkspace({
       }, verticalId);
       return updated;
     }));
+  };
+
+  const pasteDateCell = (event: React.ClipboardEvent<HTMLInputElement>, rowId: string, key: string) => {
+    const clipboardValue = event.clipboardData.getData("text").split(/\t|\r?\n/, 1)[0];
+    const normalizedDate = normalizePastedDate(clipboardValue);
+    if (!normalizedDate) {
+      event.preventDefault();
+      onMessage(`"${clipboardValue.trim()}" is not a recognized date. Paste an Excel date, MM/DD/YYYY, or YYYY-MM-DD.`);
+      return;
+    }
+    event.preventDefault();
+    updateCell(rowId, key, normalizedDate);
   };
 
   const addPastedRows = () => {
@@ -302,7 +315,7 @@ export function EmployeeDataWorkspace({
                     if (column.kind === "select") {
                       return <td key={column.key}><select value={value} onChange={(event) => updateCell(row.id, column.key, event.target.value)}><option value="">Select…</option>{column.options?.map((option) => <option key={option}>{option}</option>)}</select></td>;
                     }
-                    return <td key={column.key}><input type={column.kind === "date" ? "date" : column.kind === "time" ? "time" : "text"} value={value} onChange={(event) => updateCell(row.id, column.key, event.target.value)} /></td>;
+                    return <td key={column.key}><input type={column.kind === "date" ? "date" : column.kind === "time" ? "time" : "text"} value={value} onPaste={column.kind === "date" ? (event) => pasteDateCell(event, row.id, column.key) : undefined} onChange={(event) => updateCell(row.id, column.key, event.target.value)} /></td>;
                   })}
                   <td className="row-action"><button aria-label={`Delete row ${index + 1}`} onClick={() => {
                     setRows((current) => current.length === 1 ? [emptyWorkspaceRow()] : current.filter((item) => item.id !== row.id));
