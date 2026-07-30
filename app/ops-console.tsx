@@ -173,20 +173,29 @@ function reportsForPage(reports: PublishedReport[], page: Page) {
   return vertical ? reports.filter((report) => report.vertical_id === vertical.id) : [];
 }
 
+function reportDates(reports: PublishedReport[]) {
+  return Array.from(new Set(reports.map((report) => report.report_date))).sort((a, b) => b.localeCompare(a));
+}
+
+function reportsForDate(reports: PublishedReport[], reportDate: string) {
+  return reportDate ? reports.filter((report) => report.report_date === reportDate) : reports;
+}
+
 function reportTotal(report: PublishedReport | undefined) {
   return report?.report_metrics.reduce((sum, item) => sum + metricNumber(item), 0) ?? 0;
 }
 
-function buildVerticalCards(reports: PublishedReport[]) {
+function buildVerticalCards(reports: PublishedReport[], historyReports: PublishedReport[] = reports) {
   return verticalOptions.map((vertical, index) => {
     const matching = reports.filter((report) => report.vertical_id === vertical.id);
+    const historyMatching = historyReports.filter((report) => report.vertical_id === vertical.id);
     const latest = matching[0];
     return {
       id: vertical.key,
       num: `0${index + 1}`,
       title: vertical.name,
       today: reportTotal(latest),
-      month: matching.reduce((sum, report) => sum + reportTotal(report), 0),
+      month: historyMatching.reduce((sum, report) => sum + reportTotal(report), 0),
       status: latest ? `Updated ${latest.report_date}` : "Awaiting report",
       tone: latest ? "ok" : "review",
     };
@@ -377,6 +386,7 @@ export function OpsConsole() {
   const [clients, setClients] = useState<ClientOption[]>([]);
   const [employeeDspId, setEmployeeDspId] = useState<string | null>(null);
   const [publishedReports, setPublishedReports] = useState<PublishedReport[]>([]);
+  const [clientReportDate, setClientReportDate] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   // Legacy upload support remains available for historical reports, but the
   // employee UI now uses the in-app workspace below.
@@ -468,6 +478,11 @@ export function OpsConsole() {
     if (role === "employee") return "Employee workspace";
     return page === "overview" ? "Operations overview" : navItems.find((item) => item.id === page)?.label ?? "Operations";
   }, [page, role]);
+  const availableClientReportDates = reportDates(publishedReports);
+  const selectedClientReportDate = clientReportDate === null || (clientReportDate && !availableClientReportDates.includes(clientReportDate))
+    ? availableClientReportDates[0] ?? ""
+    : clientReportDate;
+  const visiblePublishedReports = reportsForDate(publishedReports, selectedClientReportDate);
 
   function selectPage(nextPage: Page) {
     setPage(nextPage);
@@ -598,7 +613,7 @@ export function OpsConsole() {
   }
 
   async function exportDashboard(format: ExportFormat) {
-    await exportDashboardData(publishedReports, clientName, format);
+    await exportDashboardData(visiblePublishedReports, clientName, format);
     setToast(`${format.toUpperCase()} export prepared.`);
   }
 
@@ -699,16 +714,18 @@ export function OpsConsole() {
                 <div>
                   <p className="eyebrow">{clientName} · Daily report</p>
                   <h1>{pageTitle}</h1>
-                  <p>{page === "overview" ? "Summary totals first, with individual names available only inside your company’s operational drill-down. Data is shown in a rolling 30-day window." : "Daily activity, current pipeline, and the last 30 days of updates for this operational vertical."}</p>
+                  <p>{selectedClientReportDate
+                    ? `Showing the published report for ${displayDate(selectedClientReportDate)}, with the rolling 30-day comparison retained in the overview.`
+                    : "Showing all published reports in the rolling 30-day window."}</p>
                 </div>
                 <div className="heading-actions">
-                  <div className="date-control"><span className="live-dot" /><span>Latest 30 days</span></div>
+                  <ReportDayControl reports={publishedReports} value={selectedClientReportDate} onChange={setClientReportDate} />
                   <ExportControl onExport={exportDashboard} />
                 </div>
               </div>
-              {page === "overview" && <Overview onOpen={selectPage} reports={publishedReports} />}
-              {(page === "recruiting" || page === "orientation" || page === "training") && <VerticalReport page={page} reports={publishedReports} onExport={exportDashboard} />}
-              {page === "time" && <TimeAttendance reports={publishedReports} verdicts={verdicts} onVerdict={(id, verdict) => {
+              {page === "overview" && <Overview onOpen={selectPage} reports={visiblePublishedReports} historyReports={publishedReports} selectedDate={selectedClientReportDate} />}
+              {(page === "recruiting" || page === "orientation" || page === "training") && <VerticalReport page={page} reports={visiblePublishedReports} onExport={exportDashboard} />}
+              {page === "time" && <TimeAttendance reports={visiblePublishedReports} verdicts={verdicts} onVerdict={(id, verdict) => {
                 setVerdicts((current) => ({ ...current, [id]: verdict }));
                 setToast(`Time-theft item marked ${verdict}.`);
               }} />}
@@ -793,6 +810,27 @@ function ExportControl({ onExport }: { onExport: (format: ExportFormat) => void 
   );
 }
 
+function ReportDayControl({
+  reports,
+  value,
+  onChange,
+}: {
+  reports: PublishedReport[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const dates = reportDates(reports);
+  return (
+    <label className="report-day-control">
+      <span>View report day</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)} aria-label="View report day">
+        <option value="">All available days</option>
+        {dates.map((date) => <option value={date} key={date}>{displayDate(date)}</option>)}
+      </select>
+    </label>
+  );
+}
+
 function EmptyState({ title, copy }: { title: string; copy: string }) {
   return (
     <div className="empty-state">
@@ -802,14 +840,24 @@ function EmptyState({ title, copy }: { title: string; copy: string }) {
   );
 }
 
-function Overview({ onOpen, reports }: { onOpen: (page: Page) => void; reports: PublishedReport[] }) {
-  const cards = buildVerticalCards(reports);
+function Overview({
+  onOpen,
+  reports,
+  historyReports = reports,
+  selectedDate = "",
+}: {
+  onOpen: (page: Page) => void;
+  reports: PublishedReport[];
+  historyReports?: PublishedReport[];
+  selectedDate?: string;
+}) {
+  const cards = buildVerticalCards(reports, historyReports);
   return (
     <>
       <div className="hero-grid">
         <section className="panel overview-panel">
           <div className="panel-head">
-            <div><h2>Today at a glance</h2><p>Summary totals across all four managed verticals</p></div>
+            <div><h2>{selectedDate ? `${displayDate(selectedDate)} at a glance` : "30-day overview"}</h2><p>Summary totals across all four managed verticals</p></div>
             <span className="pill">Live data only</span>
           </div>
           <div className="stats-grid">
@@ -830,7 +878,7 @@ function Overview({ onOpen, reports }: { onOpen: (page: Page) => void; reports: 
           <article className="vertical-card" key={vertical.id} onClick={() => onOpen(vertical.id)} tabIndex={0} onKeyDown={(event) => event.key === "Enter" && onOpen(vertical.id)}>
             <div className="vertical-number"><span>VERTICAL {vertical.num}</span><span className={`status-${vertical.tone}`}>{vertical.status}</span></div>
             <h3>{vertical.title}</h3>
-            <div className="vertical-metrics"><div><strong>{vertical.today}</strong><span>today</span></div><div><strong>{vertical.month}</strong><span>30 days</span></div></div>
+            <div className="vertical-metrics"><div><strong>{vertical.today}</strong><span>{selectedDate ? "selected day" : "latest day"}</span></div><div><strong>{vertical.month}</strong><span>30 days</span></div></div>
           </article>
         ))}
       </section>
@@ -843,6 +891,7 @@ function Stat({ index, label, value, note }: { index: string; label: string; val
 }
 
 function VerticalReport({ page, reports, onExport }: { page: "recruiting" | "orientation" | "training"; reports: PublishedReport[]; onExport: (format: ExportFormat) => void }) {
+  const [detailsVisible, setDetailsVisible] = useState(false);
   const config = reportConfig[page];
   const matching = reportsForPage(reports, page);
   const latest = matching[0];
@@ -863,26 +912,34 @@ function VerticalReport({ page, reports, onExport }: { page: "recruiting" | "ori
         <div className="panel-head"><div><h2>{config.title}</h2><p>{config.subtitle}</p></div><ExportControl onExport={onExport} /></div>
         <div className="metric-strip">{metrics.map(([label, value]) => <div className={`metric-cell metric-tone-${metricTone(label, value)}`} key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
         <StatusLegend />
-        <div className="table-wrap">
-          <table className="data-table detail-data-table">
-            <thead><tr><th>Person</th>{columns.map((column) => <th key={column.key}>{column.label}</th>)}<th>Report date</th></tr></thead>
-            <tbody>
-              {rows.map(({ report, row }) => {
-                const detail = String(row.data.email ?? row.data.phone_number ?? row.row_type);
-                return <tr className={`report-row report-row-${rowTone(row.data)}`} key={`${report.id}:${row.id}`}>
-                  <td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><div><strong>{row.person_name ?? "Unnamed record"}</strong><div className="small-muted">{detail}</div></div></div></td>
-                  {columns.map((column) => <td key={column.key}><DetailValue value={row.data[column.key]} date={column.date} status={column.status} /></td>)}
-                  <td>{displayDate(report.report_date)}</td>
-                </tr>;
-              })}
-              {!rows.length && <tr><td colSpan={columns.length + 2}><EmptyState title="No report rows yet" copy="Published records for this vertical will appear here." /></td></tr>}
-            </tbody>
-          </table>
+        <div className="report-detail-toolbar">
+          <div><strong>Detailed person records</strong><span>{rows.length} record{rows.length === 1 ? "" : "s"} in this view</span></div>
+          <button className="secondary-btn" type="button" aria-expanded={detailsVisible} onClick={() => setDetailsVisible((visible) => !visible)}>
+            {detailsVisible ? "Hide detailed records" : "Show detailed records"}
+          </button>
         </div>
+        {detailsVisible && (
+          <div className="table-wrap">
+            <table className="data-table detail-data-table">
+              <thead><tr><th>Person</th>{columns.map((column) => <th key={column.key}>{column.label}</th>)}<th>Report date</th></tr></thead>
+              <tbody>
+                {rows.map(({ report, row }) => {
+                  const detail = String(row.data.email ?? row.data.phone_number ?? row.row_type);
+                  return <tr className={`report-row report-row-${rowTone(row.data)}`} key={`${report.id}:${row.id}`}>
+                    <td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><div><strong>{row.person_name ?? "Unnamed record"}</strong><div className="small-muted">{detail}</div></div></div></td>
+                    {columns.map((column) => <td key={column.key}><DetailValue value={row.data[column.key]} date={column.date} status={column.status} /></td>)}
+                    <td>{displayDate(report.report_date)}</td>
+                  </tr>;
+                })}
+                {!rows.length && <tr><td colSpan={columns.length + 2}><EmptyState title="No report rows yet" copy="Published records for this vertical will appear here." /></td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
         <GeneratedRecordLists verticalId={verticalOptions.find((item) => item.key === page)?.id ?? ""} rows={generatedRows} title="Client operational lists" />
       </section>
       <aside className="side-stack">
-        <section className="panel side-panel"><div className="panel-head"><div><h3>30-day activity</h3><p>Published source reports</p></div></div>{matching.length ? <div className="metric-strip compact-metrics"><div className="metric-cell"><strong>{matching.length}</strong><span>reporting days</span></div><div className="metric-cell"><strong>{recordCount}</strong><span>records</span></div></div> : <EmptyState title="No progress data" copy="Progress rates will be calculated after reports are published." />}</section>
+        <section className="panel side-panel"><div className="panel-head"><div><h3>{matching.length <= 1 ? "Daily activity" : "30-day activity"}</h3><p>Published source reports</p></div></div>{matching.length ? <div className="metric-strip compact-metrics"><div className="metric-cell"><strong>{matching.length}</strong><span>reporting days</span></div><div className="metric-cell"><strong>{recordCount}</strong><span>records</span></div></div> : <EmptyState title="No progress data" copy="Progress rates will be calculated after reports are published." />}</section>
         <section className="panel side-panel"><div className="panel-head"><div><h3>Privacy rule</h3><p>Names are limited to your company</p></div></div><div className="note-box">The overview uses totals. Individual names appear only inside authorized operational detail screens. Raw DL and I-9 documents remain outside the dashboard.</div></section>
       </aside>
     </div>
@@ -890,6 +947,7 @@ function VerticalReport({ page, reports, onExport }: { page: "recruiting" | "ori
 }
 
 function TimeAttendance({ reports, verdicts, onVerdict }: { reports: PublishedReport[]; verdicts: Record<string, Verdict>; onVerdict: (id: string, verdict: Verdict) => void }) {
+  const [detailsVisible, setDetailsVisible] = useState(false);
   const matching = reportsForPage(reports, "time");
   const latest = matching[0];
   const metrics = latest
@@ -904,7 +962,13 @@ function TimeAttendance({ reports, verdicts, onVerdict }: { reports: PublishedRe
         <div className="panel-head"><div><h2>Time & Attendance</h2><p>Daily exceptions with client validation for potential time theft.</p></div><span className="pill">{awaitingReview} awaiting review</span></div>
         <div className="metric-strip">{metrics.map(([label, value]) => <div className={`metric-cell metric-tone-${metricTone(label, value)}`} key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
         <StatusLegend />
-        <div className="table-wrap"><table className="data-table"><thead><tr><th>Employee</th><th>Potential time theft</th><th>Date</th><th>Variance</th><th>Client decision</th></tr></thead><tbody>
+        <div className="report-detail-toolbar">
+          <div><strong>Detailed attendance records</strong><span>{rows.length} record{rows.length === 1 ? "" : "s"} in this view</span></div>
+          <button className="secondary-btn" type="button" aria-expanded={detailsVisible} onClick={() => setDetailsVisible((visible) => !visible)}>
+            {detailsVisible ? "Hide detailed records" : "Show detailed records"}
+          </button>
+        </div>
+        {detailsVisible && <div className="table-wrap"><table className="data-table"><thead><tr><th>Employee</th><th>Potential time theft</th><th>Date</th><th>Variance</th><th>Client decision</th></tr></thead><tbody>
           {rows.map(({ report, row }) => {
             const verdict = verdicts[row.id] ?? "pending";
             const issue = String(row.data.possible_time_theft ?? (row.data.missed_punch_in || row.data.missed_punch_out ? "Missed punch" : "Attendance record"));
@@ -913,7 +977,7 @@ function TimeAttendance({ reports, verdicts, onVerdict }: { reports: PublishedRe
             return <tr className={`report-row report-row-${verdict === "invalid" ? "danger" : verdict === "valid" ? "success" : rowTone(row.data)}`} key={row.id}><td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><strong>{row.person_name ?? "Unnamed employee"}</strong></div></td><td><strong>{issue}</strong><div className="small-muted">{detail}</div></td><td>{displayDate(report.report_date)}</td><td>{variance}</td><td><div className="validation-btns"><button className={`valid-btn ${verdict === "valid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "valid")}>Valid</button><button className={`invalid-btn ${verdict === "invalid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "invalid")}>Invalid</button></div></td></tr>;
           })}
           {!rows.length && <tr><td colSpan={5}><EmptyState title="No time and attendance exceptions" copy="Uploaded and published exceptions will appear here for client review." /></td></tr>}
-        </tbody></table></div>
+        </tbody></table></div>}
         <GeneratedRecordLists verticalId={verticalOptions[3].id} rows={generatedRows} title="Client attendance lists" />
       </section>
       <aside className="side-stack"><section className="panel side-panel"><div className="panel-head"><div><h3>Compliance summary</h3><p>Last 30 days</p></div></div><EmptyState title="No compliance data" copy="Compliance rates will be calculated from published reports." /></section><section className="panel side-panel"><div className="panel-head"><div><h3>Decision requirement</h3></div></div><div className="note-box">Invalid and Needs More Information decisions require a client comment. VINE Pulse records the decision-maker and timestamp in the audit history.</div></section></aside>
@@ -1066,6 +1130,7 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
   const [clientId, setClientId] = useState("");
   const [clientPage, setClientPage] = useState<Page>("overview");
   const [reports, setReports] = useState<PublishedReport[]>([]);
+  const [reportDate, setReportDate] = useState<string | null>(null);
   const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({});
   const [loading, setLoading] = useState(true);
   const selectedClient = clients.find((client) => client.id === clientId) ?? clients[0];
@@ -1105,6 +1170,12 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
     };
   }, [selectedClient?.id, onMessage]);
 
+  const availableReportDates = reportDates(reports);
+  const selectedReportDate = reportDate === null || (reportDate && !availableReportDates.includes(reportDate))
+    ? availableReportDates[0] ?? ""
+    : reportDate;
+  const visibleReports = reportsForDate(reports, selectedReportDate);
+
   if (!selectedClient) {
     return (
       <section className="panel admin-report-empty">
@@ -1121,7 +1192,7 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
 
   async function exportClientDashboard(format: ExportFormat) {
     try {
-      await exportDashboardData(reports, selectedClient.company_name, format);
+      await exportDashboardData(visibleReports, selectedClient.company_name, format);
       onMessage(`${format.toUpperCase()} export prepared.`);
     } catch (error) {
       onMessage(error instanceof Error ? error.message : "The export could not be prepared.");
@@ -1147,6 +1218,7 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
               setLoading(true);
               setClientId(event.target.value);
               setClientPage("overview");
+              setReportDate(null);
               setVerdicts({});
             }}
           >
@@ -1188,10 +1260,12 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
             <div>
               <p className="eyebrow">{selectedClient.company_name} · Daily report</p>
               <h1>{clientPageTitle}</h1>
-              <p>{clientPage === "overview" ? "Summary totals across all four verticals for the rolling 30-day period." : "Daily activity, current pipeline, and published operational details for this vertical."}</p>
+              <p>{selectedReportDate
+                ? `Showing the published report for ${displayDate(selectedReportDate)}, with the rolling 30-day comparison retained in the overview.`
+                : "Showing all published reports in the rolling 30-day window."}</p>
             </div>
             <div className="heading-actions">
-              <div className="date-control"><span className="live-dot" /><span>Latest 30 days</span></div>
+              <ReportDayControl reports={reports} value={selectedReportDate} onChange={setReportDate} />
               <ExportControl onExport={exportClientDashboard} />
             </div>
           </div>
@@ -1200,13 +1274,13 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
             <section className="panel admin-client-loading"><span className="pulse-loader" /><strong>Loading {selectedClient.company_name}&apos;s published reports…</strong></section>
           ) : (
             <>
-              {clientPage === "overview" && <Overview onOpen={setClientPage} reports={reports} />}
+              {clientPage === "overview" && <Overview onOpen={setClientPage} reports={visibleReports} historyReports={reports} selectedDate={selectedReportDate} />}
               {(clientPage === "recruiting" || clientPage === "orientation" || clientPage === "training") && (
-                <VerticalReport page={clientPage} reports={reports} onExport={exportClientDashboard} />
+                <VerticalReport page={clientPage} reports={visibleReports} onExport={exportClientDashboard} />
               )}
               {clientPage === "time" && (
                 <TimeAttendance
-                  reports={reports}
+                  reports={visibleReports}
                   verdicts={verdicts}
                   onVerdict={(id, verdict) => {
                     setVerdicts((current) => ({ ...current, [id]: verdict }));
