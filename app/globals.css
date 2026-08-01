@@ -2580,6 +2580,29 @@ button {
   background: #f3fcf9;
 }
 
+/* Keep filter checkboxes compact. The editable-grid input rule above must not
+   stretch them across the menu and hide their corresponding column values. */
+.workspace-grid .column-filter-option input[type="checkbox"] {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  padding: 0;
+  box-shadow: none;
+}
+
+.workspace-grid .column-filter-option input[type="checkbox"]:focus {
+  background: transparent;
+  box-shadow: 0 0 0 2px rgba(0, 140, 99, .2);
+}
+
+.workspace-grid .column-filter-option span {
+  display: block;
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--ink);
+}
+
 .workspace-grid .row-action {
   width: 78px;
   min-width: 78px;
