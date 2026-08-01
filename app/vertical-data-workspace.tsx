@@ -30,6 +30,17 @@ function valueText(value: ExtractedValue) {
   return value === null || value === undefined ? "" : String(value);
 }
 
+const BLANK_FILTER_VALUE = "__vine_pulse_blank__";
+
+function filterValue(value: ExtractedValue) {
+  const text = valueText(value).trim();
+  return text || BLANK_FILTER_VALUE;
+}
+
+function filterLabel(value: string) {
+  return value === BLANK_FILTER_VALUE ? "(Blanks)" : value;
+}
+
 function formulaTone(value: ExtractedValue) {
   const normalized = valueText(value).toLowerCase();
   if (["high", "yes", "fail", "failed", "missing"].some((item) => normalized.includes(item))) return "danger";
@@ -103,9 +114,31 @@ export function EmployeeDataWorkspace({
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
-  const columns = gridColumns[verticalId] ?? [];
+  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
+  const [filterMenuKey, setFilterMenuKey] = useState<string | null>(null);
+  const [filterSearch, setFilterSearch] = useState("");
+  const [draftFilterValues, setDraftFilterValues] = useState<string[]>([]);
+  const columns = useMemo(() => gridColumns[verticalId] ?? [], [verticalId]);
   const calculatedFields = columns.filter((column) => column.kind === "formula").map((column) => column.label);
-  const allRowsSelected = rows.length > 0 && rows.every((row) => selectedRows.has(row.id));
+  const activeFilterCount = Object.keys(columnFilters).length;
+
+  const columnFilterOptions = useMemo(() => {
+    const options: Record<string, string[]> = {};
+    columns.forEach((column) => {
+      options[column.key] = Array.from(new Set(rows.map((row) => filterValue(row.data[column.key]))))
+        .sort((left, right) => filterLabel(left).localeCompare(filterLabel(right), undefined, { numeric: true, sensitivity: "base" }));
+    });
+    return options;
+  }, [columns, rows]);
+
+  const filteredRows = useMemo(
+    () => rows.filter((row) => Object.entries(columnFilters).every(([key, acceptedValues]) =>
+      acceptedValues.includes(filterValue(row.data[key])),
+    )),
+    [columnFilters, rows],
+  );
+
+  const allRowsSelected = filteredRows.length > 0 && filteredRows.every((row) => selectedRows.has(row.id));
 
   useEffect(() => {
     if (!supabase) return;
@@ -131,6 +164,8 @@ export function EmployeeDataWorkspace({
         setLatestVersion(Number(data?.version ?? 0));
       }
       setSelectedRows(new Set());
+      setColumnFilters({});
+      setFilterMenuKey(null);
       setLoading(false);
     })();
     return () => { active = false; };
@@ -189,7 +224,47 @@ export function EmployeeDataWorkspace({
   };
 
   const toggleAllRows = () => {
-    setSelectedRows(allRowsSelected ? new Set() : new Set(rows.map((row) => row.id)));
+    setSelectedRows((current) => {
+      const next = new Set(current);
+      if (allRowsSelected) filteredRows.forEach((row) => next.delete(row.id));
+      else filteredRows.forEach((row) => next.add(row.id));
+      return next;
+    });
+  };
+
+  const openColumnFilter = (key: string) => {
+    const options = columnFilterOptions[key] ?? [];
+    setFilterMenuKey((current) => current === key ? null : key);
+    setFilterSearch("");
+    setDraftFilterValues(columnFilters[key] ? [...columnFilters[key]] : [...options]);
+  };
+
+  const toggleFilterValue = (value: string) => {
+    setDraftFilterValues((current) => current.includes(value)
+      ? current.filter((item) => item !== value)
+      : [...current, value]);
+  };
+
+  const applyColumnFilter = (key: string) => {
+    const options = columnFilterOptions[key] ?? [];
+    setColumnFilters((current) => {
+      if (draftFilterValues.length === options.length && options.every((value) => draftFilterValues.includes(value))) {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      }
+      return { ...current, [key]: [...draftFilterValues] };
+    });
+    setFilterMenuKey(null);
+  };
+
+  const clearColumnFilter = (key: string) => {
+    setColumnFilters((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+    setFilterMenuKey(null);
   };
 
   const deleteSelectedRows = () => {
@@ -292,6 +367,7 @@ export function EmployeeDataWorkspace({
           <div className="workspace-toolbar-actions">
             <button className="secondary-btn" onClick={() => setRows((current) => [...current, emptyWorkspaceRow()])}>+ Add row</button>
             <button className="secondary-btn" onClick={() => setPasteOpen(true)}>Paste Excel rows</button>
+            {activeFilterCount > 0 && <button className="secondary-btn clear-filters-btn" onClick={() => { setColumnFilters({}); setFilterMenuKey(null); }}>Clear filters ({activeFilterCount})</button>}
             <button className="bulk-delete-btn" disabled={!selectedRows.size} onClick={deleteSelectedRows}>Delete selected{selectedRows.size ? ` (${selectedRows.size})` : ""}</button>
             <button className="primary-btn" disabled={saving || loading} onClick={saveUpdate}>{saving ? "Saving…" : "Save & update client"}</button>
           </div>
@@ -301,9 +377,36 @@ export function EmployeeDataWorkspace({
         )}
         <div className="sheet-scroll">
           <table className="workspace-grid">
-            <thead><tr><th className="row-select"><input type="checkbox" checked={allRowsSelected} onChange={toggleAllRows} aria-label="Select all report rows" /></th><th className="row-number">#</th>{columns.map((column) => <th style={{ minWidth: column.width ?? 150 }} key={column.key}>{column.label}{column.kind === "formula" && <span className="formula-badge">fx</span>}</th>)}<th className="row-action">Action</th></tr></thead>
+            <thead><tr><th className="row-select"><input type="checkbox" checked={allRowsSelected} onChange={toggleAllRows} aria-label="Select all visible report rows" /></th><th className="row-number">#</th>{columns.map((column) => {
+              const options = columnFilterOptions[column.key] ?? [];
+              const visibleOptions = options.filter((value) => filterLabel(value).toLowerCase().includes(filterSearch.trim().toLowerCase()));
+              const allVisibleSelected = visibleOptions.length > 0 && visibleOptions.every((value) => draftFilterValues.includes(value));
+              const filterActive = Object.prototype.hasOwnProperty.call(columnFilters, column.key);
+              return (
+                <th className={`filterable-column${filterMenuKey === column.key ? " filter-open" : ""}`} style={{ minWidth: column.width ?? 150 }} key={column.key}>
+                  <div className="column-heading"><span>{column.label}{column.kind === "formula" && <span className="formula-badge">fx</span>}</span><button className={`column-filter-btn${filterActive ? " active" : ""}`} onClick={() => openColumnFilter(column.key)} aria-label={`Filter ${column.label}`} aria-expanded={filterMenuKey === column.key}>&#9662;</button></div>
+                  {filterMenuKey === column.key && (
+                    <div className="column-filter-menu" role="dialog" aria-label={`Filter ${column.label}`}>
+                      <strong>Filter {column.label}</strong>
+                      <input className="column-filter-search" type="search" value={filterSearch} onChange={(event) => setFilterSearch(event.target.value)} placeholder="Search values" autoFocus />
+                      <label className="column-filter-option select-all"><input type="checkbox" checked={allVisibleSelected} onChange={() => setDraftFilterValues((current) => {
+                        if (allVisibleSelected) return current.filter((value) => !visibleOptions.includes(value));
+                        return Array.from(new Set([...current, ...visibleOptions]));
+                      })} /><span>Select all</span></label>
+                      <div className="column-filter-values">
+                        {visibleOptions.map((value) => <label className="column-filter-option" key={value}><input type="checkbox" checked={draftFilterValues.includes(value)} onChange={() => toggleFilterValue(value)} /><span title={filterLabel(value)}>{filterLabel(value)}</span></label>)}
+                        {!visibleOptions.length && <p>No matching values.</p>}
+                      </div>
+                      <div className="column-filter-actions"><button className="link-btn" onClick={() => clearColumnFilter(column.key)} disabled={!filterActive}>Clear filter</button><button className="primary-btn" onClick={() => applyColumnFilter(column.key)}>Apply</button></div>
+                    </div>
+                  )}
+                </th>
+              );
+            })}<th className="row-action">Action</th></tr></thead>
             <tbody>
-              {rows.map((row, index) => (
+              {filteredRows.map((row) => {
+                const index = rows.findIndex((item) => item.id === row.id);
+                return (
                 <tr className={selectedRows.has(row.id) ? "selected-row" : ""} key={row.id}>
                   <td className="row-select"><input type="checkbox" checked={selectedRows.has(row.id)} onChange={() => toggleRow(row.id)} aria-label={`Select row ${index + 1}`} /></td>
                   <th className="row-number">{index + 1}</th>
@@ -326,12 +429,14 @@ export function EmployeeDataWorkspace({
                     });
                   }}>Delete</button></td>
                 </tr>
-              ))}
+                );
+              })}
+              {!filteredRows.length && <tr><td className="workspace-filter-empty" colSpan={columns.length + 3}>No rows match the current filters. <button className="link-btn" onClick={() => setColumnFilters({})}>Clear all filters</button></td></tr>}
             </tbody>
           </table>
         </div>
         {loading && <div className="sheet-loading">Loading the latest report for this date…</div>}
-        <div className="workspace-foot"><span>{realRows.length} report record{realRows.length === 1 ? "" : "s"}</span><span>Saving creates a new audit-safe version; earlier versions remain in the 30-day history.</span></div>
+        <div className="workspace-foot"><span>{activeFilterCount ? `${filteredRows.length} of ${rows.length} row${rows.length === 1 ? "" : "s"} visible` : `${realRows.length} report record${realRows.length === 1 ? "" : "s"}`}</span><span>Filters only change this workspace view. Saving creates a new audit-safe version.</span></div>
       </section>
 
       <GeneratedRecordLists verticalId={verticalId} rows={rows.map((row) => normalizeWorkspaceRow(row, verticalId))} title={profile.role === "super_admin" ? "Super Admin report views" : "Employee report views"} />
