@@ -14,6 +14,12 @@ type DeleteUserPayload = {
   userId?: string;
 };
 
+type UpdateEmployeeAccessPayload = {
+  userId?: string;
+  verticalId?: string;
+  clientIds?: string[];
+};
+
 function serverClient() {
   const url =
     process.env.NEXT_PUBLIC_SUPABASE_URL ??
@@ -242,5 +248,145 @@ export async function DELETE(request: Request) {
       id: userId,
       email: target.email,
     },
+  });
+}
+
+export async function PATCH(request: Request) {
+  const { admin, missing } = serverClient();
+  if (!admin) {
+    return Response.json(
+      { error: `Supabase server configuration is incomplete. Missing: ${missing.join(", ")}.` },
+      { status: 503 },
+    );
+  }
+
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (!bearer) {
+    return Response.json({ error: "Authentication is required." }, { status: 401 });
+  }
+
+  const { data: authData, error: authError } = await admin.auth.getUser(bearer);
+  if (authError || !authData.user) {
+    return Response.json({ error: "Your session is invalid." }, { status: 401 });
+  }
+
+  const { data: requester } = await admin
+    .from("profiles")
+    .select("role, active")
+    .eq("id", authData.user.id)
+    .single();
+
+  if (!requester?.active || requester.role !== "super_admin") {
+    return Response.json({ error: "Super Admin access is required." }, { status: 403 });
+  }
+
+  const payload = (await request.json()) as UpdateEmployeeAccessPayload;
+  const userId = payload.userId?.trim();
+  const verticalId = payload.verticalId?.trim();
+  const clientIds = Array.from(new Set((payload.clientIds ?? []).filter(Boolean)));
+
+  if (!userId || !verticalId || !clientIds.length) {
+    return Response.json(
+      { error: "Select an employee vertical and at least one DSP." },
+      { status: 400 },
+    );
+  }
+
+  const { data: target, error: targetError } = await admin
+    .from("profiles")
+    .select("id, email, role, vertical_id")
+    .eq("id", userId)
+    .single();
+
+  if (targetError || !target || target.role !== "employee") {
+    return Response.json({ error: "The selected employee no longer exists." }, { status: 404 });
+  }
+
+  const { data: conflicts, error: conflictError } = await admin
+    .from("employee_client_assignments")
+    .select("employee_id, client_id")
+    .in("client_id", clientIds)
+    .eq("vertical_id", verticalId)
+    .neq("employee_id", userId);
+
+  if (conflictError) {
+    return Response.json({ error: conflictError.message }, { status: 400 });
+  }
+  if (conflicts?.length) {
+    return Response.json(
+      { error: "One or more selected DSPs already have another employee assigned to this vertical." },
+      { status: 409 },
+    );
+  }
+
+  const { data: previousAssignments } = await admin
+    .from("employee_client_assignments")
+    .select("client_id, vertical_id")
+    .eq("employee_id", userId);
+
+  const { error: profileError } = await admin
+    .from("profiles")
+    .update({ vertical_id: verticalId })
+    .eq("id", userId);
+  if (profileError) {
+    return Response.json({ error: profileError.message }, { status: 400 });
+  }
+
+  const { error: verticalError } = await admin
+    .from("employee_assignments")
+    .upsert({ employee_id: userId, vertical_id: verticalId });
+  if (verticalError) {
+    await admin.from("profiles").update({ vertical_id: target.vertical_id }).eq("id", userId);
+    return Response.json({ error: verticalError.message }, { status: 400 });
+  }
+
+  const { error: clearError } = await admin
+    .from("employee_client_assignments")
+    .delete()
+    .eq("employee_id", userId);
+  if (clearError) {
+    await admin.from("profiles").update({ vertical_id: target.vertical_id }).eq("id", userId);
+    if (target.vertical_id) {
+      await admin.from("employee_assignments").upsert({ employee_id: userId, vertical_id: target.vertical_id });
+    }
+    return Response.json({ error: clearError.message }, { status: 400 });
+  }
+
+  const nextAssignments = clientIds.map((clientId) => ({
+    employee_id: userId,
+    client_id: clientId,
+    vertical_id: verticalId,
+  }));
+  const { error: assignmentError } = await admin
+    .from("employee_client_assignments")
+    .insert(nextAssignments);
+
+  if (assignmentError) {
+    if (previousAssignments?.length) {
+      await admin.from("employee_client_assignments").insert(
+        previousAssignments.map((assignment) => ({
+          employee_id: userId,
+          client_id: assignment.client_id,
+          vertical_id: assignment.vertical_id,
+        })),
+      );
+    }
+    await admin.from("profiles").update({ vertical_id: target.vertical_id }).eq("id", userId);
+    if (target.vertical_id) {
+      await admin.from("employee_assignments").upsert({ employee_id: userId, vertical_id: target.vertical_id });
+    }
+    return Response.json({ error: assignmentError.message }, { status: 400 });
+  }
+
+  await admin.from("audit_log").insert({
+    actor_id: authData.user.id,
+    action: "employee.access_updated",
+    entity_type: "profile",
+    entity_id: userId,
+    metadata: { email: target.email, vertical_id: verticalId, client_ids: clientIds },
+  });
+
+  return Response.json({
+    user: { id: userId, verticalId, clientIds },
   });
 }
