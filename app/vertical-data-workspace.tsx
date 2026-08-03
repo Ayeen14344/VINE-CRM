@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { createReportMetrics, type ExtractedValue } from "../lib/report-extraction";
+import { createReportMetrics, extractReportFromFile, type ExtractedValue } from "../lib/report-extraction";
 import { supabase, type PortalProfile } from "../lib/supabase-browser";
 import {
   emptyWorkspaceRow,
@@ -118,6 +118,9 @@ export function EmployeeDataWorkspace({
   const [filterMenuKey, setFilterMenuKey] = useState<string | null>(null);
   const [filterSearch, setFilterSearch] = useState("");
   const [draftFilterValues, setDraftFilterValues] = useState<string[]>([]);
+  const [sourceFile, setSourceFile] = useState<File | null>(null);
+  const [importingFile, setImportingFile] = useState(false);
+  const [fileInputKey, setFileInputKey] = useState(0);
   const columns = useMemo(() => gridColumns[verticalId] ?? [], [verticalId]);
   const calculatedFields = columns.filter((column) => column.kind === "formula").map((column) => column.label);
   const activeFilterCount = Object.keys(columnFilters).length;
@@ -166,6 +169,8 @@ export function EmployeeDataWorkspace({
       setSelectedRows(new Set());
       setColumnFilters({});
       setFilterMenuKey(null);
+      setSourceFile(null);
+      setFileInputKey((current) => current + 1);
       setLoading(false);
     })();
     return () => { active = false; };
@@ -278,9 +283,53 @@ export function EmployeeDataWorkspace({
     onMessage(`${count} selected row${count === 1 ? "" : "s"} removed. Save the update to publish this change to the client.`);
   };
 
+  const importSourceFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > 25 * 1024 * 1024) {
+      onMessage("The source file must be 25 MB or smaller.");
+      setFileInputKey((current) => current + 1);
+      return;
+    }
+    const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+    const spreadsheet = ["xlsx", "xls", "csv"].includes(extension);
+    const documentOrImage = ["pdf", "png", "jpg", "jpeg"].includes(extension);
+    if (!spreadsheet && !documentOrImage) {
+      onMessage("Use CSV, XLSX, XLS, PDF, PNG, JPG, or JPEG files.");
+      setFileInputKey((current) => current + 1);
+      return;
+    }
+
+    setSourceFile(file);
+    if (documentOrImage) {
+      onMessage(`${file.name} is attached as the source. Enter or paste the report rows, then save to store the file with this client update.`);
+      return;
+    }
+
+    setImportingFile(true);
+    try {
+      const extraction = await extractReportFromFile(file, verticalId);
+      const importedRows = workspaceRowsFromSaved(extraction.rows.map((row, index) => ({
+        id: `import-${Date.now()}-${index}`,
+        person_name: row.personName,
+        data: row.data,
+      })), verticalId);
+      setRows(importedRows.length ? importedRows : [emptyWorkspaceRow()]);
+      setSelectedRows(new Set());
+      setColumnFilters({});
+      setFilterMenuKey(null);
+      onMessage(`${extraction.rows.length} row${extraction.rows.length === 1 ? "" : "s"} imported from ${file.name}. Review the grid, then save the client update.`);
+    } catch (error) {
+      setSourceFile(null);
+      setFileInputKey((current) => current + 1);
+      onMessage(error instanceof Error ? error.message : "The source file could not be imported.");
+    } finally {
+      setImportingFile(false);
+    }
+  };
+
   const saveUpdate = async () => {
     if (!supabase) return;
-    if (!realRows.length && !latestVersion) {
+    if (!realRows.length && !latestVersion && !sourceFile) {
       onMessage("Add at least one driver or candidate before saving.");
       return;
     }
@@ -294,15 +343,15 @@ export function EmployeeDataWorkspace({
         vertical_id: verticalId,
         report_date: reportDate,
         version: nextVersion,
-        source_filename: "VINE Pulse in-app workspace",
+        source_filename: sourceFile?.name ?? "VINE Pulse in-app workspace",
         source_file_path: null,
-        content_type: "application/vnd.vine-pulse.workspace+json",
-        file_size: null,
+        content_type: sourceFile?.type || "application/vnd.vine-pulse.workspace+json",
+        file_size: sourceFile?.size ?? null,
         created_by: profile.id,
         status: "published",
         extraction_status: "manual_entry",
         extraction_summary: {
-          source: "in_app_workspace",
+          source: sourceFile ? "uploaded_source_and_in_app_workspace" : "in_app_workspace",
           rows: realRows.length,
           formula_fields: calculatedFields,
         },
@@ -315,6 +364,31 @@ export function EmployeeDataWorkspace({
       setSaving(false);
       onMessage(reportError?.message ?? "The update could not be created.");
       return;
+    }
+
+    if (sourceFile) {
+      const safeFilename = sourceFile.name.replace(/[^A-Za-z0-9._-]/g, "_");
+      const sourcePath = `${client.id}/${verticalId}/${reportDate}/${report.id}/${safeFilename}`;
+      const { error: storageError } = await supabase.storage
+        .from("client-reports")
+        .upload(sourcePath, sourceFile, { upsert: false });
+      if (storageError) {
+        await supabase.from("reports").delete().eq("id", report.id);
+        setSaving(false);
+        onMessage(`The source file could not be stored: ${storageError.message}`);
+        return;
+      }
+      const { error: sourcePathError } = await supabase
+        .from("reports")
+        .update({ source_file_path: sourcePath })
+        .eq("id", report.id);
+      if (sourcePathError) {
+        await supabase.storage.from("client-reports").remove([sourcePath]);
+        await supabase.from("reports").delete().eq("id", report.id);
+        setSaving(false);
+        onMessage(`The uploaded source could not be linked: ${sourcePathError.message}`);
+        return;
+      }
     }
 
     const { error: rowsError } = realRows.length
@@ -342,6 +416,8 @@ export function EmployeeDataWorkspace({
       return;
     }
     setLatestVersion(nextVersion);
+    setSourceFile(null);
+    setFileInputKey((current) => current + 1);
     setSaving(false);
     onMessage(`${client.company_name} updated successfully. The client can now see version ${nextVersion}.`);
   };
@@ -366,12 +442,17 @@ export function EmployeeDataWorkspace({
           <label>Report date<input type="date" value={reportDate} onChange={(event) => setReportDate(event.target.value)} /></label>
           <div className="workspace-toolbar-actions">
             <button className="secondary-btn" onClick={() => setRows((current) => [...current, emptyWorkspaceRow()])}>+ Add row</button>
+            <label className={`secondary-btn source-file-btn${importingFile ? " disabled" : ""}`}>
+              {importingFile ? "Importing…" : "Upload report file"}
+              <input key={fileInputKey} type="file" accept=".csv,.xlsx,.xls,.pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf" disabled={importingFile || saving} onChange={(event) => void importSourceFile(event.target.files?.[0])} />
+            </label>
             <button className="secondary-btn" onClick={() => setPasteOpen(true)}>Paste Excel rows</button>
             {activeFilterCount > 0 && <button className="secondary-btn clear-filters-btn" onClick={() => { setColumnFilters({}); setFilterMenuKey(null); }}>Clear filters ({activeFilterCount})</button>}
             <button className="bulk-delete-btn" disabled={!selectedRows.size} onClick={deleteSelectedRows}>Delete selected{selectedRows.size ? ` (${selectedRows.size})` : ""}</button>
             <button className="primary-btn" disabled={saving || loading} onClick={saveUpdate}>{saving ? "Saving…" : "Save & update client"}</button>
           </div>
         </div>
+        {sourceFile && <div className="source-file-banner"><div><strong>Source attached: {sourceFile.name}</strong><span>{Math.max(0.1, sourceFile.size / 1024 / 1024).toFixed(1)} MB · saved privately with this DSP report</span></div><button className="link-btn" onClick={() => { setSourceFile(null); setFileInputKey((current) => current + 1); }} disabled={saving}>Remove</button></div>}
         {calculatedFields.length > 0 && (
           <div className="formula-notice"><strong>Protected formula columns:</strong> {calculatedFields.join(", ")}. They recalculate automatically from the time entries.</div>
         )}

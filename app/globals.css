@@ -1737,6 +1737,55 @@ button {
   opacity: .45;
 }
 
+.user-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.table-edit-btn {
+  padding: 7px 9px;
+  border: 1px solid #acdacc;
+  border-radius: 8px;
+  color: #087653;
+  background: #f1fbf7;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 760;
+}
+
+.table-edit-btn:hover {
+  border-color: #68bba3;
+  background: #e4f7f0;
+}
+
+.employee-access-dialog {
+  width: min(680px, 100%);
+}
+
+.employee-access-vertical {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 18px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.employee-access-vertical select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 11px 12px;
+  background: white;
+  color: var(--ink);
+}
+
+.employee-access-vertical small {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 500;
+}
+
 .current-account-label {
   color: #087653;
   font-size: 9px;
@@ -2297,6 +2346,52 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 9px;
+}
+
+.workspace-toolbar .source-file-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: normal;
+  cursor: pointer;
+}
+
+.workspace-toolbar .source-file-btn.disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+.workspace-toolbar .source-file-btn input {
+  display: none;
+}
+
+.source-file-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 22px;
+  border-bottom: 1px solid #cde7dd;
+  background: #f0faf6;
+}
+
+.source-file-banner div {
+  display: grid;
+  gap: 3px;
+}
+
+.source-file-banner strong {
+  color: #0a6248;
+  font-size: 11px;
+}
+
+.source-file-banner span {
+  color: var(--muted);
+  font-size: 10px;
 }
 
 .bulk-delete-btn {

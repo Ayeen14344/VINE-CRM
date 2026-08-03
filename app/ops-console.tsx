@@ -39,7 +39,16 @@ type UploadPreview = {
   published: boolean;
 };
 type ReportMetric = [string, number];
-type AdminUser = { id: string; name: string; email: string; role: string; assignment: string };
+type AdminUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  portalRole: "super_admin" | "employee" | "client";
+  assignment: string;
+  verticalId: string | null;
+  clientIds: string[];
+};
 type ResetResult = {
   error?: string;
   details?: string[];
@@ -1363,6 +1372,9 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
   const [resetBusy, setResetBusy] = useState(false);
   const [deleteUserTarget, setDeleteUserTarget] = useState<AdminUser | null>(null);
   const [deleteUserBusy, setDeleteUserBusy] = useState(false);
+  const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
+  const [editAccess, setEditAccess] = useState({ verticalId: verticalOptions[0].id, clientIds: [] as string[] });
+  const [editAccessBusy, setEditAccessBusy] = useState(false);
   const [userForm, setUserForm] = useState({ fullName: "", email: "", password: "", role: "employee", clientId: clients[0]?.id ?? "", verticalId: verticalOptions[0].id, clientIds: [] as string[] });
   const selectedClientId = userForm.clientId || clients[0]?.id || "";
   const resetPhrase = resetScope === "workspace" ? "RESET VINE PULSE" : "CLEAR REPORTS";
@@ -1380,7 +1392,10 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
       supabase
         .from("reports")
         .select("id", { count: "exact", head: true }),
-    ]).then(([{ data, error }, { count, error: reportCountError }]) => {
+      supabase
+        .from("employee_client_assignments")
+        .select("employee_id, client_id, vertical_id"),
+    ]).then(([{ data, error }, { count, error: reportCountError }, { data: assignmentData, error: assignmentError }]) => {
         if (!active) return;
         if (error) {
           onMessage(error.message);
@@ -1389,16 +1404,29 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
         if (reportCountError) {
           onMessage(reportCountError.message);
         }
+        if (assignmentError) {
+          onMessage(assignmentError.message);
+        }
         setReportsCount(count ?? 0);
         setUsers((data ?? []).map((user) => {
           const vertical = verticalOptions.find((item) => item.id === user.vertical_id);
           const client = clients.find((item) => item.id === user.client_id);
+          const clientIds = (assignmentData ?? [])
+            .filter((assignment) => assignment.employee_id === user.id)
+            .map((assignment) => assignment.client_id);
           return {
             id: user.id,
             name: user.full_name || user.email,
             email: user.email,
             role: user.role === "super_admin" ? "Super Admin" : user.role === "employee" ? "Employee" : "Client",
-            assignment: user.role === "super_admin" ? "All access" : user.role === "employee" ? vertical?.name ?? "Vertical pending" : client?.company_name ?? "DSP pending",
+            portalRole: user.role as AdminUser["portalRole"],
+            assignment: user.role === "super_admin"
+              ? "All access"
+              : user.role === "employee"
+                ? `${vertical?.name ?? "Vertical pending"} · ${clientIds.length} DSP${clientIds.length === 1 ? "" : "s"}`
+                : client?.company_name ?? "DSP pending",
+            verticalId: user.vertical_id,
+            clientIds,
           };
         }));
       });
@@ -1447,9 +1475,67 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
     if (!response.ok) return onMessage(result.error ?? "User creation failed.");
     const vertical = verticalOptions.find((item) => item.id === userForm.verticalId);
     const client = clients.find((item) => item.id === selectedClientId);
-    setUsers([...users, { id: result.user?.id ?? "", name: userForm.fullName, email: userForm.email, role: userForm.role === "admin" ? "Super Admin" : userForm.role === "employee" ? "Employee" : "Client", assignment: userForm.role === "employee" ? `${vertical?.name} · ${userForm.clientIds.length} DSPs` : userForm.role === "client" ? client?.company_name ?? "Client" : "All access" }]);
+    setUsers([...users, {
+      id: result.user?.id ?? "",
+      name: userForm.fullName,
+      email: userForm.email,
+      role: userForm.role === "admin" ? "Super Admin" : userForm.role === "employee" ? "Employee" : "Client",
+      portalRole: userForm.role === "admin" ? "super_admin" : userForm.role as "employee" | "client",
+      assignment: userForm.role === "employee" ? `${vertical?.name} · ${userForm.clientIds.length} DSP${userForm.clientIds.length === 1 ? "" : "s"}` : userForm.role === "client" ? client?.company_name ?? "Client" : "All access",
+      verticalId: userForm.role === "employee" ? userForm.verticalId : null,
+      clientIds: userForm.role === "employee" ? [...userForm.clientIds] : [],
+    }]);
     setUserForm({ ...userForm, fullName: "", email: "", password: "" });
     onMessage("User account created.");
+  }
+
+  function openEmployeeAccess(user: AdminUser) {
+    setEditingUser(user);
+    setEditAccess({
+      verticalId: user.verticalId ?? verticalOptions[0].id,
+      clientIds: [...user.clientIds],
+    });
+  }
+
+  async function saveEmployeeAccess() {
+    if (!session || !editingUser) return;
+    if (!editAccess.clientIds.length) {
+      onMessage("Select at least one DSP for this employee.");
+      return;
+    }
+    setEditAccessBusy(true);
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          userId: editingUser.id,
+          verticalId: editAccess.verticalId,
+          clientIds: editAccess.clientIds,
+        }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) {
+        onMessage(result.error ?? "Employee access could not be updated.");
+        return;
+      }
+      const vertical = verticalOptions.find((item) => item.id === editAccess.verticalId);
+      setUsers((current) => current.map((user) => user.id === editingUser.id ? {
+        ...user,
+        verticalId: editAccess.verticalId,
+        clientIds: [...editAccess.clientIds],
+        assignment: `${vertical?.name ?? "Vertical pending"} · ${editAccess.clientIds.length} DSP${editAccess.clientIds.length === 1 ? "" : "s"}`,
+      } : user));
+      onMessage(`${editingUser.name}'s client access was updated.`);
+      setEditingUser(null);
+    } catch {
+      onMessage("The employee access request could not reach the server.");
+    } finally {
+      setEditAccessBusy(false);
+    }
   }
 
   function openReset(scope: ResetScope) {
@@ -1577,7 +1663,7 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
         </section>
         <section className="panel report-panel">
           <div className="panel-head"><div><h2>Users & assignments</h2><p>Employee verticals and client membership</p></div></div>
-          <div className="table-wrap"><table className="data-table"><thead><tr><th>User</th><th>Role</th><th>Access</th><th>Action</th></tr></thead><tbody>{users.map((user) => <tr key={user.id || user.email}><td><div className="person-cell"><span className="person-avatar">{initials(user.name)}</span><div><strong>{user.name}</strong><div className="small-muted">{user.email}</div></div></div></td><td><span className="pill">{user.role}</span></td><td>{user.assignment}</td><td>{user.id === session?.user.id ? <span className="current-account-label">Current account</span> : <button className="table-delete-btn" onClick={() => setDeleteUserTarget(user)} disabled={!user.id}>Delete user</button>}</td></tr>)}{!users.length && <tr><td colSpan={4}><EmptyState title="No portal users found" copy="Create an employee or client login after adding the DSP." /></td></tr>}</tbody></table></div>
+          <div className="table-wrap"><table className="data-table"><thead><tr><th>User</th><th>Role</th><th>Access</th><th>Action</th></tr></thead><tbody>{users.map((user) => <tr key={user.id || user.email}><td><div className="person-cell"><span className="person-avatar">{initials(user.name)}</span><div><strong>{user.name}</strong><div className="small-muted">{user.email}</div></div></div></td><td><span className="pill">{user.role}</span></td><td>{user.assignment}</td><td>{user.id === session?.user.id ? <span className="current-account-label">Current account</span> : <div className="user-action-buttons">{user.portalRole === "employee" && <button className="table-edit-btn" onClick={() => openEmployeeAccess(user)} disabled={!user.id}>Edit access</button>}<button className="table-delete-btn" onClick={() => setDeleteUserTarget(user)} disabled={!user.id}>Delete user</button></div>}</td></tr>)}{!users.length && <tr><td colSpan={4}><EmptyState title="No portal users found" copy="Create an employee or client login after adding the DSP." /></td></tr>}</tbody></table></div>
         </section>
       </div>
       <section className="panel danger-zone">
@@ -1625,6 +1711,26 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
               >
                 {resetBusy ? "Clearing data…" : resetScope === "workspace" ? "Reset demo workspace" : "Clear all report data"}
               </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {editingUser && (
+        <div className="preview-overlay" role="dialog" aria-modal="true" aria-labelledby="edit-access-dialog-title">
+          <section className="preview-dialog employee-access-dialog">
+            <div className="panel-head">
+              <div>
+                <p className="eyebrow">Employee access</p>
+                <h2 id="edit-access-dialog-title">Edit {editingUser.name}</h2>
+                <p>Choose one vertical and every DSP this employee is allowed to work on.</p>
+              </div>
+              <button className="icon-btn" onClick={() => setEditingUser(null)} disabled={editAccessBusy} aria-label="Close">×</button>
+            </div>
+            <label className="employee-access-vertical">Employee vertical<select value={editAccess.verticalId} onChange={(event) => setEditAccess((current) => ({ ...current, verticalId: event.target.value }))}>{verticalOptions.map((vertical) => <option key={vertical.id} value={vertical.id}>{vertical.name}</option>)}</select><small>This vertical applies across every selected DSP.</small></label>
+            <fieldset className="dsp-assignment-fieldset"><legend>Assigned DSPs / clients</legend><div className="dsp-assignment-list">{clients.map((client) => <label key={client.id}><input type="checkbox" checked={editAccess.clientIds.includes(client.id)} onChange={(event) => setEditAccess((current) => ({ ...current, clientIds: event.target.checked ? [...current.clientIds, client.id] : current.clientIds.filter((id) => id !== client.id) }))} /><span>{client.company_name}</span></label>)}</div><small>The employee landing page will show all selected DSPs.</small></fieldset>
+            <div className="preview-dialog-actions">
+              <button className="secondary-btn" onClick={() => setEditingUser(null)} disabled={editAccessBusy}>Cancel</button>
+              <button className="primary-btn" onClick={saveEmployeeAccess} disabled={editAccessBusy || !editAccess.clientIds.length}>{editAccessBusy ? "Saving access…" : "Save employee access"}</button>
             </div>
           </section>
         </div>
