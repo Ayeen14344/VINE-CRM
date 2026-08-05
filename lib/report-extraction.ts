@@ -115,6 +115,7 @@ const definitions: Record<string, SheetDefinition[]> = {
     {
       names: ["Time and Attendance"],
       fields: [
+        { key: "station", label: "Station" },
         { key: "driver_name", label: "Name" },
         { key: "phone_number", label: "Phone number" },
         { key: "cortex_app_in", label: "Cortex App In" },
@@ -122,6 +123,7 @@ const definitions: Record<string, SheetDefinition[]> = {
         { key: "adp_clock_in", label: "ADP Clock in" },
         { key: "adp_clock_out", label: "ADP Clock Out" },
         { key: "total_break_time_used", label: "Total Break Time Used" },
+        { key: "comments", label: "Comments" },
         { key: "sign_in_difference", label: "Sign in Difference" },
         { key: "sign_out_difference", label: "Sign Out Difference" },
         { key: "missed_punch_in", label: "Missed Punch In" },
@@ -129,7 +131,7 @@ const definitions: Record<string, SheetDefinition[]> = {
         { key: "missed_punch_in_followup", label: "Follow up for Missed punch In" },
         { key: "missed_punch_in_status", label: "Status" },
         { key: "missed_punch_out_followup", label: "Follow up for Missed punch Out" },
-        { key: "missed_punch_out_status", label: "Status" },
+        { key: "missed_punch_out_status", label: "Status", occurrence: 1 },
         { key: "possible_time_theft", label: "Possible Time Theft" },
         { key: "sent_to_dispatch", label: "Sent To Dispatch" },
       ],
@@ -234,7 +236,7 @@ export function createReportMetrics(verticalId: string, rows: ExtractedReportRow
 
   const missedPunches = count(rows, (row) => isYes(row.data.missed_punch_in) || isYes(row.data.missed_punch_out));
   const missingLunch = count(rows, (row) => normalized(row.data.total_break_time_used) === "0" || normalized(row.data.total_break_time_used).includes("00:00"));
-  const timeTheft = count(rows, (row) => hasValue(row.data.possible_time_theft));
+  const timeTheft = count(rows, (row) => ["low", "moderate", "high"].includes(normalized(row.data.possible_time_theft)));
   return [
     metric("missed_punches", "Missed Punches", missedPunches),
     metric("missing_lunch_break", "Missing Lunch Break", missingLunch),

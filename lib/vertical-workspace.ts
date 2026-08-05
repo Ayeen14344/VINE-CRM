@@ -23,7 +23,8 @@ export type GeneratedGroup = {
 
 const yesNo = ["Yes", "No"];
 const completeStatuses = ["Completed", "In Progress", "Pending", "For Scheduling", "Off-boarded"];
-const timeStatuses = ["Pending", "Completed", "Valid", "Invalid"];
+const timeStatuses = ["Entered", "Pending", "No Response", "Completed", "Valid", "Invalid"];
+const dispatchStatuses = ["Yes", "Fixed by Driver", "No"];
 
 export const gridColumns: Record<string, GridColumn[]> = {
   "00000000-0000-4000-8000-000000000101": [
@@ -69,6 +70,7 @@ export const gridColumns: Record<string, GridColumn[]> = {
     { key: "work_schedule_plotted", label: "Work Schedule Plotted", kind: "date", width: 190 },
   ],
   "00000000-0000-4000-8000-000000000104": [
+    { key: "station", label: "Station", width: 130 },
     { key: "driver_name", label: "Name", width: 190 },
     { key: "phone_number", label: "Phone Number", width: 145 },
     { key: "cortex_app_in", label: "Cortex App In", kind: "time", width: 140 },
@@ -76,17 +78,17 @@ export const gridColumns: Record<string, GridColumn[]> = {
     { key: "adp_clock_in", label: "ADP Clock In", kind: "time", width: 140 },
     { key: "adp_clock_out", label: "ADP Clock Out", kind: "time", width: 140 },
     { key: "total_break_time_used", label: "Total Break Time Used", width: 175 },
+    { key: "comments", label: "Comments", width: 240 },
     { key: "sign_in_difference", label: "Sign In Difference", kind: "formula", width: 165 },
     { key: "sign_out_difference", label: "Sign Out Difference", kind: "formula", width: 175 },
     { key: "missed_punch_in", label: "Missed Punch In", kind: "formula", width: 145 },
     { key: "missed_punch_out", label: "Missed Punch Out", kind: "formula", width: 155 },
-    { key: "missed_punch_in_followup", label: "Follow-up: Punch In", width: 185 },
+    { key: "missed_punch_in_followup", label: "Follow up for Missed Punch In", kind: "select", options: yesNo, width: 210 },
     { key: "missed_punch_in_status", label: "Punch In Status", kind: "select", options: timeStatuses, width: 150 },
-    { key: "missed_punch_out_followup", label: "Follow-up: Punch Out", width: 190 },
+    { key: "missed_punch_out_followup", label: "Follow up for Missed Punch Out", kind: "select", options: yesNo, width: 220 },
     { key: "missed_punch_out_status", label: "Punch Out Status", kind: "select", options: timeStatuses, width: 155 },
     { key: "possible_time_theft", label: "Possible Time Theft", kind: "formula", width: 175 },
-    { key: "sent_to_dispatch", label: "Sent To Dispatch", kind: "select", options: yesNo, width: 155 },
-    { key: "comments", label: "Comments", width: 240 },
+    { key: "sent_to_dispatch", label: "Sent To Dispatch", kind: "select", options: dispatchStatuses, width: 165 },
   ],
 };
 
@@ -213,18 +215,18 @@ export function applyVerticalFourFormulas(data: Record<string, ExtractedValue>) 
   next.missed_punch_in = adpIn === null ? "Yes" : "No";
   next.missed_punch_out = adpOut === null ? "Yes" : "No";
 
-  // Workbook formula:
-  // IFERROR(IF((ABS(H)+ABS(I))>45,"High",
-  // IF((ABS(E)+ABS(F))>30,"Moderate",
-  // IF((ABS(E)+ABS(F))>15,"Low","Low"))),"missing")
+  // Workbook rule: combined absolute sign-in and sign-out variance above
+  // 15 minutes is Low, above 30 is Moderate, and above 45 is High.
   if (signIn === null || signOut === null || adpIn === null || adpOut === null) {
     next.possible_time_theft = "missing";
   } else if (Math.abs(signIn) + Math.abs(signOut) > 45) {
     next.possible_time_theft = "High";
-  } else if (Math.abs(adpIn) + Math.abs(adpOut) > 30) {
+  } else if (Math.abs(signIn) + Math.abs(signOut) > 30) {
     next.possible_time_theft = "Moderate";
-  } else {
+  } else if (Math.abs(signIn) + Math.abs(signOut) > 15) {
     next.possible_time_theft = "Low";
+  } else {
+    next.possible_time_theft = "No";
   }
   return next;
 }
@@ -336,6 +338,7 @@ export function generatedGroups(verticalId: string, rows: WorkspaceRow[]): Gener
     group("Missed punch out", "danger", (row) => matches(row.data.missed_punch_out, "yes"), "missed_punch_out_status"),
     group("High time-theft risk", "danger", (row) => matches(row.data.possible_time_theft, "high"), "possible_time_theft"),
     group("Moderate time-theft risk", "warning", (row) => matches(row.data.possible_time_theft, "moderate"), "possible_time_theft"),
-    group("Sent to dispatch", "neutral", (row) => matches(row.data.sent_to_dispatch, "yes"), "sent_to_dispatch"),
+    group("Low time-theft risk", "warning", (row) => matches(row.data.possible_time_theft, "low"), "possible_time_theft"),
+    group("Sent to dispatch", "neutral", (row) => matches(row.data.sent_to_dispatch, "yes") || matches(row.data.sent_to_dispatch, "fixed by driver"), "sent_to_dispatch"),
   ];
 }
