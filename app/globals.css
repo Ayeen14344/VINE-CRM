@@ -822,6 +822,20 @@ button {
   white-space: nowrap;
 }
 
+.attendance-detail-table {
+  min-width: 3100px;
+}
+
+.attendance-detail-table th,
+.attendance-detail-table td {
+  white-space: nowrap;
+}
+
+.attendance-detail-table td:nth-child(9) {
+  min-width: 220px;
+  white-space: normal;
+}
+
 .detail-status,
 .detail-empty {
   display: inline-flex;
