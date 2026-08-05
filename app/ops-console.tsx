@@ -96,7 +96,7 @@ const verticalTemplateMeta: Record<string, { filename: string; summary: string }
   },
   "00000000-0000-4000-8000-000000000104": {
     filename: "Vertical 4 - Time and Attendance.xlsx",
-    summary: "Time and Attendance / 17 mapped fields",
+    summary: "Time and Attendance / 19 mapped fields",
   },
 };
 
@@ -963,7 +963,7 @@ function TimeAttendance({ reports, verdicts, onVerdict }: { reports: PublishedRe
     ? latest.report_metrics.map((item) => [item.metric_label, String(metricNumber(item))])
     : [["Missed punches", "0"], ["Missing lunch break", "0"], ["Daily hours violation", "0"], ["7-day rolling", "0"], ["Attendance", "0"], ["Potential time theft", "0"]];
   const rows = matching.flatMap((report) => report.report_rows.map((row) => ({ report, row }))).slice(0, 100);
-  const awaitingReview = rows.filter(({ row }) => row.data.possible_time_theft).length;
+  const awaitingReview = rows.filter(({ row }) => /^(low|moderate|high)$/i.test(String(row.data.possible_time_theft ?? "").trim())).length;
   const generatedRows = latest ? workspaceRowsFromSaved(latest.report_rows, latest.vertical_id) : [];
   return (
     <div className="section-grid">
@@ -977,15 +977,34 @@ function TimeAttendance({ reports, verdicts, onVerdict }: { reports: PublishedRe
             {detailsVisible ? "Hide detailed records" : "Show detailed records"}
           </button>
         </div>
-        {detailsVisible && <div className="table-wrap"><table className="data-table"><thead><tr><th>Employee</th><th>Potential time theft</th><th>Date</th><th>Variance</th><th>Client decision</th></tr></thead><tbody>
+        {detailsVisible && <div className="table-wrap"><table className="data-table attendance-detail-table"><thead><tr><th>Station</th><th>Employee</th><th>Phone Number</th><th>Cortex App In</th><th>Cortex App Out</th><th>ADP Clock In</th><th>ADP Clock Out</th><th>Total Break Time Used</th><th>Comments</th><th>Sign In Difference</th><th>Sign Out Difference</th><th>Missed Punch In</th><th>Missed Punch Out</th><th>Follow up for Missed Punch In</th><th>Punch In Status</th><th>Follow up for Missed Punch Out</th><th>Punch Out Status</th><th>Possible Time Theft</th><th>Sent To Dispatch</th><th>Report Date</th><th>Client Decision</th></tr></thead><tbody>
           {rows.map(({ report, row }) => {
             const verdict = verdicts[row.id] ?? "pending";
-            const issue = String(row.data.possible_time_theft ?? (row.data.missed_punch_in || row.data.missed_punch_out ? "Missed punch" : "Attendance record"));
-            const detail = `Sign in: ${String(row.data.sign_in_difference ?? "—")} · Sign out: ${String(row.data.sign_out_difference ?? "—")}`;
-            const variance = `${String(row.data.sign_in_difference ?? "0")} / ${String(row.data.sign_out_difference ?? "0")}`;
-            return <tr className={`report-row report-row-${verdict === "invalid" ? "danger" : verdict === "valid" ? "success" : rowTone(row.data)}`} key={row.id}><td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><strong>{row.person_name ?? "Unnamed employee"}</strong></div></td><td><strong>{issue}</strong><div className="small-muted">{detail}</div></td><td>{displayDate(report.report_date)}</td><td>{variance}</td><td><div className="validation-btns"><button className={`valid-btn ${verdict === "valid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "valid")}>Valid</button><button className={`invalid-btn ${verdict === "invalid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "invalid")}>Invalid</button></div></td></tr>;
+            return <tr className={`report-row report-row-${verdict === "invalid" ? "danger" : verdict === "valid" ? "success" : rowTone(row.data)}`} key={row.id}>
+              <td><DetailValue value={row.data.station} /></td>
+              <td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><strong>{row.person_name ?? "Unnamed employee"}</strong></div></td>
+              <td><DetailValue value={row.data.phone_number} /></td>
+              <td><DetailValue value={row.data.cortex_app_in} /></td>
+              <td><DetailValue value={row.data.cortex_app_out} /></td>
+              <td><DetailValue value={row.data.adp_clock_in} /></td>
+              <td><DetailValue value={row.data.adp_clock_out} /></td>
+              <td><DetailValue value={row.data.total_break_time_used} /></td>
+              <td><DetailValue value={row.data.comments} /></td>
+              <td><DetailValue value={row.data.sign_in_difference} status /></td>
+              <td><DetailValue value={row.data.sign_out_difference} status /></td>
+              <td><DetailValue value={row.data.missed_punch_in} status /></td>
+              <td><DetailValue value={row.data.missed_punch_out} status /></td>
+              <td><DetailValue value={row.data.missed_punch_in_followup} status /></td>
+              <td><DetailValue value={row.data.missed_punch_in_status} status /></td>
+              <td><DetailValue value={row.data.missed_punch_out_followup} status /></td>
+              <td><DetailValue value={row.data.missed_punch_out_status} status /></td>
+              <td><DetailValue value={row.data.possible_time_theft} status /></td>
+              <td><DetailValue value={row.data.sent_to_dispatch} status /></td>
+              <td>{displayDate(report.report_date)}</td>
+              <td><div className="validation-btns"><button className={`valid-btn ${verdict === "valid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "valid")}>Valid</button><button className={`invalid-btn ${verdict === "invalid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "invalid")}>Invalid</button></div></td>
+            </tr>;
           })}
-          {!rows.length && <tr><td colSpan={5}><EmptyState title="No time and attendance exceptions" copy="Uploaded and published exceptions will appear here for client review." /></td></tr>}
+          {!rows.length && <tr><td colSpan={21}><EmptyState title="No time and attendance exceptions" copy="Uploaded and published exceptions will appear here for client review." /></td></tr>}
         </tbody></table></div>}
         <GeneratedRecordLists verticalId={verticalOptions[3].id} rows={generatedRows} title="Client attendance lists" />
       </section>
