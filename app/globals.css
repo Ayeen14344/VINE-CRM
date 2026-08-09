@@ -3142,3 +3142,166 @@ button {
     padding: 14px;
   }
 }
+
+.client-access-summary {
+  display: grid;
+  min-width: 220px;
+  gap: 3px;
+}
+
+.client-access-summary strong {
+  color: #087653;
+  font-size: 10px;
+}
+
+.client-access-summary span {
+  max-width: 340px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.client-vertical-fieldset {
+  margin-top: 4px;
+}
+
+.client-access-impact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  border-radius: 11px;
+  background: #edf8f4;
+  padding: 12px 14px;
+  color: #24594a;
+  font-size: 10px;
+}
+
+.client-access-impact span {
+  color: var(--muted);
+}
+
+.amazon-adp-panel {
+  overflow: hidden;
+}
+
+.amazon-adp-panel > .panel-head {
+  padding: 22px 22px 0;
+}
+
+.amazon-adp-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 14px;
+  padding: 20px 22px;
+}
+
+.amazon-adp-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #dce8e4;
+  border-radius: 16px;
+  background: #fff;
+  padding: 20px;
+  box-shadow: 0 12px 28px rgba(20, 54, 45, .06);
+}
+
+.amazon-adp-card::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 5px;
+  background: #0a936a;
+  content: "";
+}
+
+.adp-card::before {
+  background: #173b55;
+}
+
+.difference-warning::before {
+  background: #e2a221;
+}
+
+.difference-danger::before {
+  background: #d84a55;
+}
+
+.amazon-adp-card span,
+.amazon-adp-card small {
+  display: block;
+}
+
+.amazon-adp-card span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 780;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.amazon-adp-card strong {
+  display: block;
+  margin: 8px 0 5px;
+  color: var(--ink);
+  font-size: 32px;
+  letter-spacing: -.045em;
+}
+
+.amazon-adp-card small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.amazon-adp-note {
+  margin: 0 22px 20px;
+}
+
+.amazon-adp-table {
+  min-width: 1180px;
+}
+
+.hours-badge {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-size: 9px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.hours-badge.tone-neutral {
+  background: #eef2f1;
+  color: #4e635c;
+}
+
+.hours-badge.tone-success {
+  background: #dff5eb;
+  color: #087653;
+}
+
+.hours-badge.tone-warning {
+  background: #fff3d9;
+  color: #9a6500;
+}
+
+.hours-badge.tone-danger {
+  background: #ffe6e8;
+  color: #bd2632;
+}
+
+@media (max-width: 760px) {
+  .amazon-adp-summary {
+    grid-template-columns: 1fr;
+    padding: 16px;
+  }
+
+  .amazon-adp-note {
+    margin-inline: 16px;
+  }
+
+  .client-access-impact {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

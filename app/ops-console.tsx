@@ -13,19 +13,19 @@ import {
   type ExtractedReportMetric,
   type ExtractedReportRow,
 } from "../lib/report-extraction";
-import { workspaceRowsFromSaved } from "../lib/vertical-workspace";
+import { clockHoursBetween, workspaceRowsFromSaved } from "../lib/vertical-workspace";
 import {
   EmployeeDataWorkspace,
   GeneratedRecordLists,
 } from "./vertical-data-workspace";
 
 type Role = "admin" | "employee" | "client";
-type Page = "overview" | "admin-reports" | "admin-client-view" | "recruiting" | "orientation" | "training" | "time";
+type Page = "overview" | "admin-reports" | "admin-client-view" | "recruiting" | "orientation" | "training" | "time" | "amzn-adp";
 type Verdict = "pending" | "valid" | "invalid";
 type SignalTone = "success" | "warning" | "danger" | "neutral";
 type ResetScope = "reports" | "workspace";
 type ExportFormat = "csv" | "xlsx" | "pdf" | "png" | "jpeg";
-type ClientOption = { id: string; company_name: string; primary_email: string };
+type ClientOption = { id: string; company_name: string; primary_email: string; enabled_vertical_ids: string[] | null };
 type UploadPreview = {
   name: string;
   size: string;
@@ -114,6 +114,29 @@ const navItems: { id: Page; short: string; label: string }[] = [
   { id: "training", short: "TR", label: "Training & Scheduling" },
   { id: "time", short: "TA", label: "Time & Attendance" },
 ];
+
+const amazonVsAdpNavItem: { id: Page; short: string; label: string } = {
+  id: "amzn-adp",
+  short: "AA",
+  label: "Amzn VS ADP",
+};
+
+const timeAttendanceVerticalId = "00000000-0000-4000-8000-000000000104";
+
+function enabledVerticalIds(client: ClientOption | undefined) {
+  return client?.enabled_vertical_ids ?? verticalOptions.map((vertical) => vertical.id);
+}
+
+function clientNavigation(client: ClientOption | undefined) {
+  const allowed = new Set(enabledVerticalIds(client));
+  const items = navItems.filter((item) => {
+    if (item.id === "overview") return true;
+    const vertical = verticalOptions.find((option) => option.key === item.id);
+    return Boolean(vertical && allowed.has(vertical.id));
+  });
+  if (allowed.has(timeAttendanceVerticalId)) items.push(amazonVsAdpNavItem);
+  return items;
+}
 
 const adminNavItems: { id: Page; short: string; label: string }[] = [
   { id: "overview", short: "SA", label: "Command center" },
@@ -410,6 +433,7 @@ export function OpsConsole() {
     ? employeeDsp
     : clients.find((client) => client.id === profile?.client_id) ?? clients[0];
   const clientName = selectedClient?.company_name ?? (role === "employee" ? "Choose a DSP" : "Client workspace");
+  const clientNavItems = useMemo(() => clientNavigation(selectedClient), [selectedClient]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(""), 3400);
@@ -430,7 +454,7 @@ export function OpsConsole() {
 
       const [{ data: profileData }, { data: clientData }] = await Promise.all([
         portalClient.from("profiles").select("*").eq("id", nextSession.user.id).single(),
-        portalClient.from("clients").select("id, company_name, primary_email").eq("active", true).order("company_name"),
+        portalClient.from("clients").select("id, company_name, primary_email, enabled_vertical_ids").eq("active", true).order("company_name"),
       ]);
       setProfile((profileData as PortalProfile | null) ?? null);
       setClients((clientData as ClientOption[] | null) ?? []);
@@ -485,7 +509,7 @@ export function OpsConsole() {
       return "Super Admin command center";
     }
     if (role === "employee") return "Employee workspace";
-    return page === "overview" ? "Operations overview" : navItems.find((item) => item.id === page)?.label ?? "Operations";
+    return page === "overview" ? "Operations overview" : [...navItems, amazonVsAdpNavItem].find((item) => item.id === page)?.label ?? "Operations";
   }, [page, role]);
   const availableClientReportDates = reportDates(publishedReports);
   const selectedClientReportDate = clientReportDate === null || (clientReportDate && !availableClientReportDates.includes(clientReportDate))
@@ -651,7 +675,7 @@ export function OpsConsole() {
 
         <div className="nav-label">{role === "admin" ? "Administration" : role === "employee" ? "Client preview" : "Client reports"}</div>
         <nav className="nav">
-          {(role === "admin" ? adminNavItems : navItems).map((item) => (
+          {(role === "admin" ? adminNavItems : role === "client" ? clientNavItems : navItems).map((item) => (
             <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => selectPage(item.id)}>
               <span className="nav-icon">{item.short}</span>
               <span className="nav-copy">{item.label}</span>
@@ -732,12 +756,13 @@ export function OpsConsole() {
                   <ExportControl onExport={exportDashboard} />
                 </div>
               </div>
-              {page === "overview" && <Overview onOpen={selectPage} reports={visiblePublishedReports} historyReports={publishedReports} selectedDate={selectedClientReportDate} />}
+              {page === "overview" && <Overview onOpen={selectPage} reports={visiblePublishedReports} historyReports={publishedReports} selectedDate={selectedClientReportDate} allowedVerticalIds={enabledVerticalIds(selectedClient)} />}
               {(page === "recruiting" || page === "orientation" || page === "training") && <VerticalReport page={page} reports={visiblePublishedReports} onExport={exportDashboard} />}
               {page === "time" && <TimeAttendance reports={visiblePublishedReports} verdicts={verdicts} onVerdict={(id, verdict) => {
                 setVerdicts((current) => ({ ...current, [id]: verdict }));
                 setToast(`Time-theft item marked ${verdict}.`);
               }} />}
+              {page === "amzn-adp" && <AmazonVsAdp reports={visiblePublishedReports} />}
             </div>
           )}
         </div>
@@ -854,19 +879,25 @@ function Overview({
   reports,
   historyReports = reports,
   selectedDate = "",
+  allowedVerticalIds,
 }: {
   onOpen: (page: Page) => void;
   reports: PublishedReport[];
   historyReports?: PublishedReport[];
   selectedDate?: string;
+  allowedVerticalIds?: string[];
 }) {
-  const cards = buildVerticalCards(reports, historyReports);
+  const cards = buildVerticalCards(reports, historyReports).filter((card) => {
+    if (!allowedVerticalIds) return true;
+    const vertical = verticalOptions.find((item) => item.key === card.id);
+    return Boolean(vertical && allowedVerticalIds.includes(vertical.id));
+  });
   return (
     <>
       <div className="hero-grid">
         <section className="panel overview-panel">
           <div className="panel-head">
-            <div><h2>{selectedDate ? `${displayDate(selectedDate)} at a glance` : "30-day overview"}</h2><p>Summary totals across all four managed verticals</p></div>
+            <div><h2>{selectedDate ? `${displayDate(selectedDate)} at a glance` : "30-day overview"}</h2><p>Summary totals across your active VINE Pulse services</p></div>
             <span className="pill">Live data only</span>
           </div>
           <div className="stats-grid">
@@ -1010,6 +1041,73 @@ function TimeAttendance({ reports, verdicts, onVerdict }: { reports: PublishedRe
       </section>
       <aside className="side-stack"><section className="panel side-panel"><div className="panel-head"><div><h3>Compliance summary</h3><p>Last 30 days</p></div></div><EmptyState title="No compliance data" copy="Compliance rates will be calculated from published reports." /></section><section className="panel side-panel"><div className="panel-head"><div><h3>Decision requirement</h3></div></div><div className="note-box">Invalid and Needs More Information decisions require a client comment. VINE Pulse records the decision-maker and timestamp in the audit history.</div></section></aside>
     </div>
+  );
+}
+
+function AmazonVsAdp({ reports }: { reports: PublishedReport[] }) {
+  const matching = reportsForPage(reports, "time");
+  const rows = matching.flatMap((report) => report.report_rows.map((row) => {
+    const amazonHours = clockHoursBetween(row.data.cortex_app_in, row.data.cortex_app_out);
+    const adpHours = clockHoursBetween(row.data.adp_clock_in, row.data.adp_clock_out);
+    return {
+      report,
+      row,
+      amazonHours,
+      adpHours,
+      difference: amazonHours !== null && adpHours !== null ? Math.round((amazonHours - adpHours) * 100) / 100 : null,
+    };
+  }));
+  const amazonTotal = rows.reduce((sum, item) => sum + (item.amazonHours ?? 0), 0);
+  const adpTotal = rows.reduce((sum, item) => sum + (item.adpHours ?? 0), 0);
+  const difference = Math.round((amazonTotal - adpTotal) * 100) / 100;
+  const completeComparisons = rows.filter((item) => item.difference !== null).length;
+  const formatHours = (value: number | null) => value === null ? "Missing" : `${value.toFixed(2)} hrs`;
+  const differenceTone = (value: number | null) => {
+    if (value === null) return "neutral";
+    const absolute = Math.abs(value);
+    if (absolute <= 0.25) return "success";
+    if (absolute <= 0.5) return "warning";
+    return "danger";
+  };
+
+  return (
+    <section className="panel amazon-adp-panel">
+      <div className="panel-head">
+        <div>
+          <h2>Amzn VS ADP</h2>
+          <p>Side-by-side clock-hour totals from the current Time & Attendance report.</p>
+        </div>
+        <span className="pill">Vertical 4 access</span>
+      </div>
+      <div className="amazon-adp-summary">
+        <div className="amazon-adp-card amazon-card"><span>Amazon total hours</span><strong>{amazonTotal.toFixed(2)}</strong><small>Cortex App In to Cortex App Out</small></div>
+        <div className="amazon-adp-card adp-card"><span>ADP total hours</span><strong>{adpTotal.toFixed(2)}</strong><small>ADP Clock In to ADP Clock Out</small></div>
+        <div className={`amazon-adp-card difference-card difference-${differenceTone(difference)}`}><span>Amazon minus ADP</span><strong>{difference > 0 ? "+" : ""}{difference.toFixed(2)}</strong><small>{completeComparisons} complete comparison{completeComparisons === 1 ? "" : "s"}</small></div>
+      </div>
+      <div className="note-box amazon-adp-note">This first version compares the elapsed clock-in to clock-out span from the current Vertical 4 data. Break deductions and additional employee-side rules can be added after the revised requirements are confirmed.</div>
+      <div className="table-wrap">
+        <table className="data-table amazon-adp-table">
+          <thead><tr><th>Station</th><th>Employee</th><th>Amazon In</th><th>Amazon Out</th><th>Amazon Hours</th><th>ADP In</th><th>ADP Out</th><th>ADP Hours</th><th>Difference</th><th>Report Date</th></tr></thead>
+          <tbody>
+            {rows.map(({ report, row, amazonHours, adpHours, difference: rowDifference }) => (
+              <tr className={`report-row report-row-${differenceTone(rowDifference)}`} key={`${report.id}:${row.id}`}>
+                <td><DetailValue value={row.data.station} /></td>
+                <td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><strong>{row.person_name ?? "Unnamed employee"}</strong></div></td>
+                <td><DetailValue value={row.data.cortex_app_in} /></td>
+                <td><DetailValue value={row.data.cortex_app_out} /></td>
+                <td><span className="hours-badge tone-neutral">{formatHours(amazonHours)}</span></td>
+                <td><DetailValue value={row.data.adp_clock_in} /></td>
+                <td><DetailValue value={row.data.adp_clock_out} /></td>
+                <td><span className="hours-badge tone-neutral">{formatHours(adpHours)}</span></td>
+                <td><span className={`hours-badge tone-${differenceTone(rowDifference)}`}>{rowDifference !== null && rowDifference > 0 ? "+" : ""}{formatHours(rowDifference)}</span></td>
+                <td>{displayDate(report.report_date)}</td>
+              </tr>
+            ))}
+            {!rows.length && <tr><td colSpan={10}><EmptyState title="No Time & Attendance hours yet" copy="This comparison will populate after a Vertical 4 report is published." /></td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -1162,6 +1260,7 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
   const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({});
   const [loading, setLoading] = useState(true);
   const selectedClient = clients.find((client) => client.id === clientId) ?? clients[0];
+  const selectedClientNavItems = useMemo(() => clientNavigation(selectedClient), [selectedClient]);
 
   useEffect(() => {
     if (!supabase || !selectedClient?.id) return;
@@ -1216,7 +1315,7 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
 
   const clientPageTitle = clientPage === "overview"
     ? "Operations overview"
-    : navItems.find((item) => item.id === clientPage)?.label ?? "Operations";
+    : [...navItems, amazonVsAdpNavItem].find((item) => item.id === clientPage)?.label ?? "Operations";
 
   async function exportClientDashboard(format: ExportFormat) {
     try {
@@ -1271,7 +1370,7 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
           <span className="pill">Super Admin viewing as client</span>
         </div>
         <nav className="admin-client-nav" aria-label={`${selectedClient.company_name} client report navigation`}>
-          {navItems.map((item) => (
+          {selectedClientNavItems.map((item) => (
             <button
               key={item.id}
               className={clientPage === item.id ? "active" : ""}
@@ -1302,7 +1401,7 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
             <section className="panel admin-client-loading"><span className="pulse-loader" /><strong>Loading {selectedClient.company_name}&apos;s published reports…</strong></section>
           ) : (
             <>
-              {clientPage === "overview" && <Overview onOpen={setClientPage} reports={visibleReports} historyReports={reports} selectedDate={selectedReportDate} />}
+              {clientPage === "overview" && <Overview onOpen={setClientPage} reports={visibleReports} historyReports={reports} selectedDate={selectedReportDate} allowedVerticalIds={enabledVerticalIds(selectedClient)} />}
               {(clientPage === "recruiting" || clientPage === "orientation" || clientPage === "training") && (
                 <VerticalReport page={clientPage} reports={visibleReports} onExport={exportClientDashboard} />
               )}
@@ -1316,6 +1415,7 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
                   }}
                 />
               )}
+              {clientPage === "amzn-adp" && <AmazonVsAdp reports={visibleReports} />}
             </>
           )}
         </div>
@@ -1384,6 +1484,7 @@ function AdminReportAccess({ clients, profile, onMessage }: { clients: ClientOpt
 function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clients: ClientOption[]; session: Session | null; onClientsChange: (clients: ClientOption[]) => void; onMessage: (message: string) => void }) {
   const [clientCompany, setClientCompany] = useState("");
   const [clientEmail, setClientEmail] = useState("");
+  const [clientVerticalIds, setClientVerticalIds] = useState<string[]>(verticalOptions.map((vertical) => vertical.id));
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [reportsCount, setReportsCount] = useState(0);
   const [resetScope, setResetScope] = useState<ResetScope | null>(null);
@@ -1394,6 +1495,9 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [editAccess, setEditAccess] = useState({ verticalId: verticalOptions[0].id, clientIds: [] as string[] });
   const [editAccessBusy, setEditAccessBusy] = useState(false);
+  const [editingClientAccess, setEditingClientAccess] = useState<ClientOption | null>(null);
+  const [editClientVerticalIds, setEditClientVerticalIds] = useState<string[]>([]);
+  const [editClientAccessBusy, setEditClientAccessBusy] = useState(false);
   const [userForm, setUserForm] = useState({ fullName: "", email: "", password: "", role: "employee", clientId: clients[0]?.id ?? "", verticalId: verticalOptions[0].id, clientIds: [] as string[] });
   const selectedClientId = userForm.clientId || clients[0]?.id || "";
   const resetPhrase = resetScope === "workspace" ? "RESET VINE PULSE" : "CLEAR REPORTS";
@@ -1459,12 +1563,37 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
     event.preventDefault();
     if (!clientCompany.trim() || !clientEmail.trim()) return;
     if (!supabase || !session) return onMessage("The production database is unavailable.");
-    const { data, error } = await supabase.from("clients").insert({ company_name: clientCompany.trim(), primary_email: clientEmail.trim().toLowerCase(), created_by: session.user.id }).select("id, company_name, primary_email").single();
+    const { data, error } = await supabase.from("clients").insert({ company_name: clientCompany.trim(), primary_email: clientEmail.trim().toLowerCase(), enabled_vertical_ids: clientVerticalIds, created_by: session.user.id }).select("id, company_name, primary_email, enabled_vertical_ids").single();
     if (error) return onMessage(error.message);
     onClientsChange([...clients, data as ClientOption].sort((a, b) => a.company_name.localeCompare(b.company_name)));
     setClientCompany("");
     setClientEmail("");
+    setClientVerticalIds(verticalOptions.map((vertical) => vertical.id));
     onMessage("DSP workspace created.");
+  }
+
+  function openClientAccess(client: ClientOption) {
+    setEditingClientAccess(client);
+    setEditClientVerticalIds(enabledVerticalIds(client));
+  }
+
+  async function saveClientAccess() {
+    if (!supabase || !editingClientAccess) return;
+    setEditClientAccessBusy(true);
+    const { data, error } = await supabase
+      .from("clients")
+      .update({ enabled_vertical_ids: editClientVerticalIds })
+      .eq("id", editingClientAccess.id)
+      .select("id, company_name, primary_email, enabled_vertical_ids")
+      .single();
+    setEditClientAccessBusy(false);
+    if (error) {
+      onMessage(error.message);
+      return;
+    }
+    onClientsChange(clients.map((client) => client.id === editingClientAccess.id ? data as ClientOption : client));
+    onMessage(`${editingClientAccess.company_name}'s client vertical access was updated.`);
+    setEditingClientAccess(null);
   }
 
   async function addUser(event: React.FormEvent) {
@@ -1660,6 +1789,7 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
           <form className="admin-form" onSubmit={addClient}>
             <label>Company name<input required value={clientCompany} onChange={(event) => setClientCompany(event.target.value)} placeholder="Example Logistics LLC" /></label>
             <label>Primary DSP email<input required type="email" value={clientEmail} onChange={(event) => setClientEmail(event.target.value)} placeholder="operations@example.com" /></label>
+            <fieldset className="dsp-assignment-fieldset"><legend>Unlocked client verticals</legend><div className="dsp-assignment-list">{verticalOptions.map((vertical) => <label key={vertical.id}><input type="checkbox" checked={clientVerticalIds.includes(vertical.id)} onChange={(event) => setClientVerticalIds((current) => event.target.checked ? [...current, vertical.id] : current.filter((id) => id !== vertical.id))} /><span>{vertical.name}</span></label>)}</div><small>Only checked verticals will appear for this client. Amzn VS ADP follows Time & Attendance access.</small></fieldset>
             <button className="primary-btn">Create DSP workspace</button>
           </form>
         </section>
@@ -1678,7 +1808,7 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
       <div className="admin-table-grid">
         <section className="panel report-panel">
           <div className="panel-head"><div><h2>DSPs</h2><p>Every DSP is isolated by database and Storage policies</p></div></div>
-          <div className="table-wrap"><table className="data-table"><thead><tr><th>Company</th><th>Primary email</th><th>Status</th></tr></thead><tbody>{clients.map((client) => <tr key={client.id}><td><strong>{client.company_name}</strong></td><td>{client.primary_email}</td><td><span className="status-ok">Active</span></td></tr>)}{!clients.length && <tr><td colSpan={3}><EmptyState title="No DSPs added" copy="Use the Add DSP form to create your practice client workspace." /></td></tr>}</tbody></table></div>
+          <div className="table-wrap"><table className="data-table"><thead><tr><th>Company</th><th>Primary email</th><th>Client access</th><th>Status</th><th>Action</th></tr></thead><tbody>{clients.map((client) => { const access = enabledVerticalIds(client); return <tr key={client.id}><td><strong>{client.company_name}</strong></td><td>{client.primary_email}</td><td><div className="client-access-summary"><strong>{access.length} of 4 verticals</strong><span>{verticalOptions.filter((vertical) => access.includes(vertical.id)).map((vertical) => vertical.name).join(" · ") || "Overview only"}</span></div></td><td><span className="status-ok">Active</span></td><td><button className="table-edit-btn" type="button" onClick={() => openClientAccess(client)}>Manage verticals</button></td></tr>; })}{!clients.length && <tr><td colSpan={5}><EmptyState title="No DSPs added" copy="Use the Add DSP form to create your practice client workspace." /></td></tr>}</tbody></table></div>
         </section>
         <section className="panel report-panel">
           <div className="panel-head"><div><h2>Users & assignments</h2><p>Employee verticals and client membership</p></div></div>
@@ -1730,6 +1860,29 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
               >
                 {resetBusy ? "Clearing data…" : resetScope === "workspace" ? "Reset demo workspace" : "Clear all report data"}
               </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {editingClientAccess && (
+        <div className="preview-overlay" role="dialog" aria-modal="true" aria-labelledby="client-vertical-access-title">
+          <section className="preview-dialog employee-access-dialog">
+            <div className="panel-head">
+              <div>
+                <p className="eyebrow">Client subscription access</p>
+                <h2 id="client-vertical-access-title">Manage {editingClientAccess.company_name}</h2>
+                <p>Unlock only the services included for this client. Locked vertical reports are hidden and protected by Supabase security.</p>
+              </div>
+              <button className="icon-btn" onClick={() => setEditingClientAccess(null)} disabled={editClientAccessBusy} aria-label="Close">×</button>
+            </div>
+            <fieldset className="dsp-assignment-fieldset client-vertical-fieldset"><legend>Unlocked verticals</legend><div className="dsp-assignment-list">{verticalOptions.map((vertical) => <label key={vertical.id}><input type="checkbox" checked={editClientVerticalIds.includes(vertical.id)} onChange={(event) => setEditClientVerticalIds((current) => event.target.checked ? [...current, vertical.id] : current.filter((id) => id !== vertical.id))} /><span>{vertical.name}</span></label>)}</div><small>Amzn VS ADP is automatically unlocked when Time & Attendance is checked.</small></fieldset>
+            <div className="client-access-impact">
+              <strong>{editClientVerticalIds.length} of 4 verticals unlocked</strong>
+              <span>{editClientVerticalIds.includes(timeAttendanceVerticalId) ? "Amzn VS ADP will be visible." : "Amzn VS ADP will be locked with Time & Attendance."}</span>
+            </div>
+            <div className="preview-dialog-actions">
+              <button className="secondary-btn" onClick={() => setEditingClientAccess(null)} disabled={editClientAccessBusy}>Cancel</button>
+              <button className="primary-btn" onClick={saveClientAccess} disabled={editClientAccessBusy}>{editClientAccessBusy ? "Saving access…" : "Save client access"}</button>
             </div>
           </section>
         </div>
