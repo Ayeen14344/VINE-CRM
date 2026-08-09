@@ -189,6 +189,16 @@ function timeFraction(value: ExtractedValue): number | null {
   return (hour * 60 + minute) / 1440;
 }
 
+export function clockHoursBetween(start: ExtractedValue, end: ExtractedValue) {
+  const startFraction = timeFraction(start);
+  const endFraction = timeFraction(end);
+  if (startFraction === null || endFraction === null) return null;
+  const elapsed = endFraction >= startFraction
+    ? endFraction - startFraction
+    : (1 - startFraction) + endFraction;
+  return Math.round(elapsed * 2400) / 100;
+}
+
 function displayMinutes(value: number) {
   const rounded = Math.round(value * 100) / 100;
   return Number.isInteger(rounded) ? rounded : rounded.toFixed(2);
