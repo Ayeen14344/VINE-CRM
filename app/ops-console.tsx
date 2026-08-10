@@ -1505,8 +1505,13 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
   const [editAccess, setEditAccess] = useState({ verticalId: verticalOptions[0].id, clientIds: [] as string[] });
   const [editAccessBusy, setEditAccessBusy] = useState(false);
   const [editingClientAccess, setEditingClientAccess] = useState<ClientOption | null>(null);
+  const [editClientDetails, setEditClientDetails] = useState({ companyName: "", primaryEmail: "" });
   const [editClientVerticalIds, setEditClientVerticalIds] = useState<string[]>([]);
   const [editClientAccessBusy, setEditClientAccessBusy] = useState(false);
+  const [passwordUser, setPasswordUser] = useState<AdminUser | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [passwordBusy, setPasswordBusy] = useState(false);
   const [userForm, setUserForm] = useState({ fullName: "", email: "", password: "", role: "employee", clientId: clients[0]?.id ?? "", verticalId: verticalOptions[0].id, clientIds: [] as string[] });
   const selectedClientId = userForm.clientId || clients[0]?.id || "";
   const resetPhrase = resetScope === "workspace" ? "RESET VINE PULSE" : "CLEAR REPORTS";
@@ -1583,15 +1588,26 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
 
   function openClientAccess(client: ClientOption) {
     setEditingClientAccess(client);
+    setEditClientDetails({ companyName: client.company_name, primaryEmail: client.primary_email });
     setEditClientVerticalIds(enabledVerticalIds(client));
   }
 
   async function saveClientAccess() {
     if (!supabase || !editingClientAccess) return;
+    const companyName = editClientDetails.companyName.trim();
+    const primaryEmail = editClientDetails.primaryEmail.trim().toLowerCase();
+    if (!companyName || !/^\S+@\S+\.\S+$/.test(primaryEmail)) {
+      onMessage("Enter a company name and a valid primary email address.");
+      return;
+    }
     setEditClientAccessBusy(true);
     const { data, error } = await supabase
       .from("clients")
-      .update({ enabled_vertical_ids: editClientVerticalIds })
+      .update({
+        company_name: companyName,
+        primary_email: primaryEmail,
+        enabled_vertical_ids: editClientVerticalIds,
+      })
       .eq("id", editingClientAccess.id)
       .select("id, company_name, primary_email, enabled_vertical_ids")
       .single();
@@ -1600,8 +1616,10 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
       onMessage(error.message);
       return;
     }
-    onClientsChange(clients.map((client) => client.id === editingClientAccess.id ? data as ClientOption : client));
-    onMessage(`${editingClientAccess.company_name}'s client vertical access was updated.`);
+    onClientsChange(clients
+      .map((client) => client.id === editingClientAccess.id ? data as ClientOption : client)
+      .sort((a, b) => a.company_name.localeCompare(b.company_name)));
+    onMessage(`${companyName}'s client information was updated.`);
     setEditingClientAccess(null);
   }
 
@@ -1692,6 +1710,57 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
       onMessage("The employee access request could not reach the server.");
     } finally {
       setEditAccessBusy(false);
+    }
+  }
+
+  function openPasswordEditor(user: AdminUser) {
+    setPasswordUser(user);
+    setNewPassword("");
+    setShowNewPassword(false);
+  }
+
+  function closePasswordEditor() {
+    if (passwordBusy) return;
+    setPasswordUser(null);
+    setNewPassword("");
+    setShowNewPassword(false);
+  }
+
+  async function saveNewPassword() {
+    if (!session || !passwordUser) return;
+    if (newPassword.length < 10) {
+      onMessage("The new password must contain at least 10 characters.");
+      return;
+    }
+
+    setPasswordBusy(true);
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          action: "update_password",
+          userId: passwordUser.id,
+          password: newPassword,
+        }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) {
+        onMessage(result.error ?? "The password could not be updated.");
+        return;
+      }
+
+      onMessage(`${passwordUser.name}'s password was updated.`);
+      setPasswordUser(null);
+      setNewPassword("");
+      setShowNewPassword(false);
+    } catch {
+      onMessage("The password request could not reach the server.");
+    } finally {
+      setPasswordBusy(false);
     }
   }
 
@@ -1817,11 +1886,11 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
       <div className="admin-table-grid">
         <section className="panel report-panel">
           <div className="panel-head"><div><h2>DSPs</h2><p>Every DSP is isolated by database and Storage policies</p></div></div>
-          <div className="table-wrap"><table className="data-table"><thead><tr><th>Company</th><th>Primary email</th><th>Client access</th><th>Status</th><th>Action</th></tr></thead><tbody>{clients.map((client) => { const access = enabledVerticalIds(client); return <tr key={client.id}><td><strong>{client.company_name}</strong></td><td>{client.primary_email}</td><td><div className="client-access-summary"><strong>{access.length} of 4 verticals</strong><span>{verticalOptions.filter((vertical) => access.includes(vertical.id)).map((vertical) => vertical.name).join(" · ") || "Overview only"}</span></div></td><td><span className="status-ok">Active</span></td><td><button className="table-edit-btn" type="button" onClick={() => openClientAccess(client)}>Manage verticals</button></td></tr>; })}{!clients.length && <tr><td colSpan={5}><EmptyState title="No DSPs added" copy="Use the Add DSP form to create your practice client workspace." /></td></tr>}</tbody></table></div>
+          <div className="table-wrap"><table className="data-table"><thead><tr><th>Company</th><th>Primary email</th><th>Client access</th><th>Status</th><th>Action</th></tr></thead><tbody>{clients.map((client) => { const access = enabledVerticalIds(client); return <tr key={client.id}><td><strong>{client.company_name}</strong></td><td>{client.primary_email}</td><td><div className="client-access-summary"><strong>{access.length} of 4 verticals</strong><span>{verticalOptions.filter((vertical) => access.includes(vertical.id)).map((vertical) => vertical.name).join(" · ") || "Overview only"}</span></div></td><td><span className="status-ok">Active</span></td><td><button className="table-edit-btn" type="button" onClick={() => openClientAccess(client)}>Edit client</button></td></tr>; })}{!clients.length && <tr><td colSpan={5}><EmptyState title="No DSPs added" copy="Use the Add DSP form to create your practice client workspace." /></td></tr>}</tbody></table></div>
         </section>
         <section className="panel report-panel">
           <div className="panel-head"><div><h2>Users & assignments</h2><p>Employee verticals and client membership</p></div></div>
-          <div className="table-wrap"><table className="data-table"><thead><tr><th>User</th><th>Role</th><th>Access</th><th>Action</th></tr></thead><tbody>{users.map((user) => <tr key={user.id || user.email}><td><div className="person-cell"><span className="person-avatar">{initials(user.name)}</span><div><strong>{user.name}</strong><div className="small-muted">{user.email}</div></div></div></td><td><span className="pill">{user.role}</span></td><td>{user.assignment}</td><td>{user.id === session?.user.id ? <span className="current-account-label">Current account</span> : <div className="user-action-buttons">{user.portalRole === "employee" && <button className="table-edit-btn" onClick={() => openEmployeeAccess(user)} disabled={!user.id}>Edit access</button>}<button className="table-delete-btn" onClick={() => setDeleteUserTarget(user)} disabled={!user.id}>Delete user</button></div>}</td></tr>)}{!users.length && <tr><td colSpan={4}><EmptyState title="No portal users found" copy="Create an employee or client login after adding the DSP." /></td></tr>}</tbody></table></div>
+          <div className="table-wrap"><table className="data-table"><thead><tr><th>User</th><th>Role</th><th>Access</th><th>Action</th></tr></thead><tbody>{users.map((user) => { const isCurrentUser = user.id === session?.user.id; return <tr key={user.id || user.email}><td><div className="person-cell"><span className="person-avatar">{initials(user.name)}</span><div><strong>{user.name}</strong><div className="small-muted">{user.email}</div></div></div></td><td><span className="pill">{user.role}</span></td><td>{user.assignment}</td><td><div className="user-action-buttons">{isCurrentUser && <span className="current-account-label">Current account</span>}{user.portalRole === "employee" && <button className="table-edit-btn" onClick={() => openEmployeeAccess(user)} disabled={!user.id}>Edit access</button>}<button className="table-edit-btn password-action" onClick={() => openPasswordEditor(user)} disabled={!user.id}>Change password</button>{!isCurrentUser && <button className="table-delete-btn" onClick={() => setDeleteUserTarget(user)} disabled={!user.id}>Delete user</button>}</div></td></tr>; })}{!users.length && <tr><td colSpan={4}><EmptyState title="No portal users found" copy="Create an employee or client login after adding the DSP." /></td></tr>}</tbody></table></div>
         </section>
       </div>
       <section className="panel danger-zone">
@@ -1878,11 +1947,15 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
           <section className="preview-dialog employee-access-dialog">
             <div className="panel-head">
               <div>
-                <p className="eyebrow">Client subscription access</p>
+                <p className="eyebrow">Client information and access</p>
                 <h2 id="client-vertical-access-title">Manage {editingClientAccess.company_name}</h2>
-                <p>Unlock only the services included for this client. Locked vertical reports are hidden and protected by Supabase security.</p>
+                <p>Update the DSP information and unlock only the services included for this client.</p>
               </div>
               <button className="icon-btn" onClick={() => setEditingClientAccess(null)} disabled={editClientAccessBusy} aria-label="Close">×</button>
+            </div>
+            <div className="client-details-form">
+              <label>Company name<input required value={editClientDetails.companyName} onChange={(event) => setEditClientDetails((current) => ({ ...current, companyName: event.target.value }))} /></label>
+              <label>Primary DSP email<input required type="email" value={editClientDetails.primaryEmail} onChange={(event) => setEditClientDetails((current) => ({ ...current, primaryEmail: event.target.value }))} /></label>
             </div>
             <fieldset className="dsp-assignment-fieldset client-vertical-fieldset"><legend>Unlocked verticals</legend><div className="dsp-assignment-list">{verticalOptions.map((vertical) => <label key={vertical.id}><input type="checkbox" checked={editClientVerticalIds.includes(vertical.id)} onChange={(event) => setEditClientVerticalIds((current) => event.target.checked ? [...current, vertical.id] : current.filter((id) => id !== vertical.id))} /><span>{vertical.name}</span></label>)}</div><small>Amzn VS ADP is automatically unlocked when Time & Attendance is checked.</small></fieldset>
             <div className="client-access-impact">
@@ -1891,7 +1964,41 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
             </div>
             <div className="preview-dialog-actions">
               <button className="secondary-btn" onClick={() => setEditingClientAccess(null)} disabled={editClientAccessBusy}>Cancel</button>
-              <button className="primary-btn" onClick={saveClientAccess} disabled={editClientAccessBusy}>{editClientAccessBusy ? "Saving access…" : "Save client access"}</button>
+              <button className="primary-btn" onClick={saveClientAccess} disabled={editClientAccessBusy}>{editClientAccessBusy ? "Saving client…" : "Save client changes"}</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {passwordUser && (
+        <div className="preview-overlay" role="dialog" aria-modal="true" aria-labelledby="password-dialog-title">
+          <section className="preview-dialog password-dialog">
+            <div className="panel-head">
+              <div>
+                <p className="eyebrow">Secure password management</p>
+                <h2 id="password-dialog-title">Change {passwordUser.name}&apos;s password</h2>
+                <p>Existing passwords cannot be viewed because Supabase stores only a secure one-way hash. Enter a replacement password below.</p>
+              </div>
+              <button className="icon-btn" onClick={closePasswordEditor} disabled={passwordBusy} aria-label="Close">×</button>
+            </div>
+            <label className="password-field">
+              New password
+              <span className="password-input-wrap">
+                <input
+                  autoFocus
+                  minLength={10}
+                  type={showNewPassword ? "text" : "password"}
+                  value={newPassword}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                  placeholder="Minimum 10 characters"
+                  autoComplete="new-password"
+                />
+                <button type="button" onClick={() => setShowNewPassword((visible) => !visible)}>{showNewPassword ? "Hide" : "Show"}</button>
+              </span>
+              <small>The password is visible only while you enter it and is never stored in the dashboard.</small>
+            </label>
+            <div className="preview-dialog-actions">
+              <button className="secondary-btn" onClick={closePasswordEditor} disabled={passwordBusy}>Cancel</button>
+              <button className="primary-btn" onClick={saveNewPassword} disabled={passwordBusy || newPassword.length < 10}>{passwordBusy ? "Updating password…" : "Update password"}</button>
             </div>
           </section>
         </div>
