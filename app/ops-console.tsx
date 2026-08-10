@@ -20,7 +20,7 @@ import {
 } from "./vertical-data-workspace";
 
 type Role = "admin" | "employee" | "client";
-type Page = "overview" | "admin-reports" | "admin-client-view" | "recruiting" | "orientation" | "training" | "time" | "amzn-adp";
+type Page = "overview" | "analytics" | "admin-reports" | "admin-client-view" | "recruiting" | "orientation" | "training" | "time" | "amzn-adp";
 type Verdict = "pending" | "valid" | "invalid";
 type SignalTone = "success" | "warning" | "danger" | "neutral";
 type ResetScope = "reports" | "workspace";
@@ -80,6 +80,17 @@ type PublishedReport = {
   report_metrics: SavedMetric[];
   report_rows: SavedRow[];
 };
+type JourneyStage = "contacted" | "live_interviewed" | "interview_passed" | "training" | "training_passed" | "for_scheduling" | "active_operations";
+type JourneyPerson = {
+  id: string;
+  name: string;
+  aliases: Set<string>;
+  reached: Set<JourneyStage>;
+  stage: JourneyStage;
+  stageIndex: number;
+  latestDate: string;
+};
+type JourneyIndex = { people: JourneyPerson[]; byAlias: Map<string, JourneyPerson> };
 
 const verticalTemplateMeta: Record<string, { filename: string; summary: string }> = {
   "00000000-0000-4000-8000-000000000101": {
@@ -121,6 +132,12 @@ const amazonVsAdpNavItem: { id: Page; short: string; label: string } = {
   label: "Amzn VS ADP",
 };
 
+const analyticsNavItem: { id: Page; short: string; label: string } = {
+  id: "analytics",
+  short: "AN",
+  label: "Analytics",
+};
+
 const timeAttendanceVerticalId = "00000000-0000-4000-8000-000000000104";
 
 function enabledVerticalIds(client: ClientOption | undefined) {
@@ -134,6 +151,7 @@ function clientNavigation(client: ClientOption | undefined) {
     const vertical = verticalOptions.find((option) => option.key === item.id);
     return Boolean(vertical && allowed.has(vertical.id));
   });
+  items.splice(1, 0, analyticsNavItem);
   if (allowed.has(timeAttendanceVerticalId)) items.push(amazonVsAdpNavItem);
   return items;
 }
@@ -319,6 +337,161 @@ function mergeReportRows(rows: SavedRow[]) {
     });
   });
   return Array.from(merged.values());
+}
+
+const journeyStages: { id: JourneyStage; label: string; shortLabel: string }[] = [
+  { id: "contacted", label: "Applicants contacted", shortLabel: "Contacted" },
+  { id: "live_interviewed", label: "Live interviewed", shortLabel: "Live interview" },
+  { id: "interview_passed", label: "Passed interview", shortLabel: "Interview passed" },
+  { id: "training", label: "Entered training", shortLabel: "Training" },
+  { id: "training_passed", label: "Passed training", shortLabel: "Training passed" },
+  { id: "for_scheduling", label: "For scheduling", shortLabel: "For scheduling" },
+  { id: "active_operations", label: "Active operations", shortLabel: "Active operations" },
+];
+
+function normalizedIdentityValue(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function personAliases(row: SavedRow) {
+  const aliases: string[] = [];
+  const email = String(row.data.email ?? row.data.email_address ?? "").trim().toLowerCase();
+  const phone = String(row.data.phone_number ?? row.data.number ?? "").replace(/\D/g, "");
+  const name = normalizedIdentityValue(row.person_name ?? row.data.candidate_name ?? row.data.driver_name ?? row.data.name);
+  if (email) aliases.push(`email:${email}`);
+  if (phone.length >= 7) aliases.push(`phone:${phone}`);
+  if (name) aliases.push(`name:${name}`);
+  return aliases;
+}
+
+function rowJourneyEvidence(report: PublishedReport, row: SavedRow): JourneyStage[] {
+  const verticalIndex = verticalOptions.findIndex((vertical) => vertical.id === report.vertical_id);
+  const text = (value: unknown) => String(value ?? "").trim().toLowerCase();
+  const isYes = (value: unknown) => /^(yes|y|true|1|complete|completed|pass|passed)$/.test(text(value));
+  const interviewResult = text(row.data.interview_result);
+  const trainingStatus = text(row.data.training_status);
+
+  if (verticalIndex === 0) {
+    const evidence: JourneyStage[] = ["contacted"];
+    if (/pass|fail|completed|attended/.test(interviewResult)) evidence.push("live_interviewed");
+    if (/pass/.test(interviewResult) || isYes(row.data.cortex_onboarded) || /pass|clear|complete/.test(text(row.data.background_check)) || /pass|clear|complete/.test(text(row.data.drug_test))) {
+      evidence.push("live_interviewed", "interview_passed");
+    }
+    return evidence;
+  }
+
+  if (verticalIndex === 1) {
+    const evidence: JourneyStage[] = ["contacted", "live_interviewed", "interview_passed"];
+    if (
+      hasDisplayValue(row.data.day_1_training_schedule) ||
+      hasDisplayValue(row.data.day_2_training_schedule) ||
+      hasDisplayValue(row.data.training_schedule) ||
+      /active|training|in progress|completed|for scheduling/.test(text(row.data.remarks))
+    ) evidence.push("training");
+    if (/for scheduling/.test(text(row.data.remarks))) evidence.push("training_passed", "for_scheduling");
+    return evidence;
+  }
+
+  if (verticalIndex === 2) {
+    const evidence: JourneyStage[] = ["contacted", "live_interviewed", "interview_passed", "training"];
+    if (/pass|complete/.test(trainingStatus)) evidence.push("training_passed");
+    if (hasDisplayValue(row.data.work_schedule_plotted) || /for scheduling|scheduled/.test(trainingStatus)) {
+      evidence.push("training_passed", "for_scheduling");
+    }
+    return evidence;
+  }
+
+  if (verticalIndex === 3) return ["active_operations"];
+  return [];
+}
+
+function buildApplicantJourney(reports: PublishedReport[]): JourneyIndex {
+  const people = new Map<string, JourneyPerson>();
+  const aliasOwner = new Map<string, string>();
+  const orderedReports = [...reports].sort((a, b) => a.report_date.localeCompare(b.report_date));
+
+  orderedReports.forEach((report) => {
+    mergeReportRows(report.report_rows).forEach((row) => {
+      const aliases = personAliases(row);
+      const existingIds = Array.from(new Set(aliases.map((alias) => aliasOwner.get(alias)).filter(Boolean) as string[]));
+      const personId = existingIds[0] ?? aliases[0] ?? `row:${row.id}`;
+      let person = people.get(personId);
+
+      if (!person) {
+        person = {
+          id: personId,
+          name: row.person_name ?? "Unnamed record",
+          aliases: new Set<string>(),
+          reached: new Set<JourneyStage>(),
+          stage: "contacted",
+          stageIndex: -1,
+          latestDate: report.report_date,
+        };
+        people.set(personId, person);
+      }
+
+      existingIds.slice(1).forEach((duplicateId) => {
+        const duplicate = people.get(duplicateId);
+        if (!duplicate || duplicate === person) return;
+        duplicate.aliases.forEach((alias) => {
+          person?.aliases.add(alias);
+          aliasOwner.set(alias, personId);
+        });
+        duplicate.reached.forEach((stage) => person?.reached.add(stage));
+        if (duplicate.stageIndex > person!.stageIndex) {
+          person!.stage = duplicate.stage;
+          person!.stageIndex = duplicate.stageIndex;
+        }
+        if (duplicate.latestDate > person!.latestDate) person!.latestDate = duplicate.latestDate;
+        people.delete(duplicateId);
+      });
+
+      aliases.forEach((alias) => {
+        person!.aliases.add(alias);
+        aliasOwner.set(alias, personId);
+      });
+      rowJourneyEvidence(report, row).forEach((stage) => {
+        person!.reached.add(stage);
+        const index = journeyStages.findIndex((item) => item.id === stage);
+        if (index > person!.stageIndex) {
+          person!.stage = stage;
+          person!.stageIndex = index;
+        }
+      });
+      if (report.report_date >= person.latestDate) {
+        person.latestDate = report.report_date;
+        if (row.person_name) person.name = row.person_name;
+      }
+    });
+  });
+
+  const byAlias = new Map<string, JourneyPerson>();
+  people.forEach((person) => person.aliases.forEach((alias) => byAlias.set(alias, person)));
+  return { people: Array.from(people.values()), byAlias };
+}
+
+function journeyPersonForRow(journey: JourneyIndex, row: SavedRow) {
+  for (const alias of personAliases(row)) {
+    const person = journey.byAlias.get(alias);
+    if (person) return person;
+  }
+  return undefined;
+}
+
+function JourneyStatus({ person }: { person: JourneyPerson | undefined }) {
+  if (!person || person.stageIndex < 0) return <span className="detail-empty">Not linked</span>;
+  const stage = journeyStages[person.stageIndex];
+  return (
+    <div className={`journey-badge journey-stage-${person.stage}`}>
+      <span className="journey-step">{String(person.stageIndex + 1).padStart(2, "0")}</span>
+      <span><strong>{stage.shortLabel}</strong><small>Updated {displayDate(person.latestDate)}</small></span>
+    </div>
+  );
 }
 
 const detailColumns: Record<
@@ -510,13 +683,14 @@ export function OpsConsole() {
       return "Super Admin command center";
     }
     if (role === "employee") return "Employee workspace";
-    return page === "overview" ? "Operations overview" : [...navItems, amazonVsAdpNavItem].find((item) => item.id === page)?.label ?? "Operations";
+    return page === "overview" ? "Operations overview" : [...navItems, analyticsNavItem, amazonVsAdpNavItem].find((item) => item.id === page)?.label ?? "Operations";
   }, [page, role]);
   const availableClientReportDates = reportDates(publishedReports);
   const selectedClientReportDate = clientReportDate === null || (clientReportDate && !availableClientReportDates.includes(clientReportDate))
     ? availableClientReportDates[0] ?? ""
     : clientReportDate;
   const visiblePublishedReports = reportsForDate(publishedReports, selectedClientReportDate);
+  const allowedPublishedReports = publishedReports.filter((report) => enabledVerticalIds(selectedClient).includes(report.vertical_id));
 
   function selectPage(nextPage: Page) {
     setPage(nextPage);
@@ -748,18 +922,21 @@ export function OpsConsole() {
                 <div>
                   <p className="eyebrow">{clientName} · Daily report</p>
                   <h1>{pageTitle}</h1>
-                  <p>{selectedClientReportDate
-                    ? `Showing the published report for ${displayDate(selectedClientReportDate)}, with the rolling 30-day comparison retained in the overview.`
-                    : "Showing all published reports in the rolling 30-day window."}</p>
+                  <p>{page === "analytics"
+                    ? "Identity-matched conversion analytics across the latest 30 days of published reports."
+                    : selectedClientReportDate
+                      ? `Showing the published report for ${displayDate(selectedClientReportDate)}, with the rolling 30-day comparison retained in the overview.`
+                      : "Showing all published reports in the rolling 30-day window."}</p>
                 </div>
                 <div className="heading-actions">
-                  <ReportDayControl reports={publishedReports} value={selectedClientReportDate} onChange={setClientReportDate} />
+                  {page !== "analytics" && <ReportDayControl reports={publishedReports} value={selectedClientReportDate} onChange={setClientReportDate} />}
                   <ExportControl onExport={exportDashboard} />
                 </div>
               </div>
               {page === "overview" && <Overview onOpen={selectPage} reports={visiblePublishedReports} historyReports={publishedReports} selectedDate={selectedClientReportDate} allowedVerticalIds={enabledVerticalIds(selectedClient)} />}
-              {(page === "recruiting" || page === "orientation" || page === "training") && <VerticalReport page={page} reports={visiblePublishedReports} onExport={exportDashboard} />}
-              {page === "time" && <TimeAttendance reports={visiblePublishedReports} verdicts={verdicts} onVerdict={(id, verdict) => {
+              {page === "analytics" && <AnalyticsDashboard reports={allowedPublishedReports} />}
+              {(page === "recruiting" || page === "orientation" || page === "training") && <VerticalReport page={page} reports={visiblePublishedReports} journeyReports={allowedPublishedReports} onExport={exportDashboard} />}
+              {page === "time" && <TimeAttendance reports={visiblePublishedReports} journeyReports={allowedPublishedReports} verdicts={verdicts} onVerdict={(id, verdict) => {
                 setVerdicts((current) => ({ ...current, [id]: verdict }));
                 setToast(`Time-theft item marked ${verdict}.`);
               }} />}
@@ -940,8 +1117,9 @@ function Stat({ index, label, value, note }: { index: string; label: string; val
   return <div className="stat-card"><div className="stat-top"><span>{label}</span><span className="stat-index">{index}</span></div><div className="stat-value"><strong>{value}</strong></div><p>{note}</p></div>;
 }
 
-function VerticalReport({ page, reports, onExport }: { page: "recruiting" | "orientation" | "training"; reports: PublishedReport[]; onExport: (format: ExportFormat) => void }) {
+function VerticalReport({ page, reports, journeyReports, onExport }: { page: "recruiting" | "orientation" | "training"; reports: PublishedReport[]; journeyReports: PublishedReport[]; onExport: (format: ExportFormat) => void }) {
   const [detailsVisible, setDetailsVisible] = useState(false);
+  const journey = useMemo(() => buildApplicantJourney(journeyReports), [journeyReports]);
   const config = reportConfig[page];
   const matching = reportsForPage(reports, page);
   const latest = matching[0];
@@ -962,6 +1140,7 @@ function VerticalReport({ page, reports, onExport }: { page: "recruiting" | "ori
         <div className="panel-head"><div><h2>{config.title}</h2><p>{config.subtitle}</p></div><ExportControl onExport={onExport} /></div>
         <div className="metric-strip">{metrics.map(([label, value]) => <div className={`metric-cell metric-tone-${metricTone(label, value)}`} key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
         <StatusLegend />
+        <div className="journey-explainer"><span className="journey-explainer-icon">↗</span><div><strong>Cross-vertical journey tracking</strong><p>Each person stays in this report while their latest stage updates from linked records across all enabled verticals.</p></div><span>{journey.people.length} linked people</span></div>
         <div className="report-detail-toolbar">
           <div><strong>Detailed person records</strong><span>{rows.length} record{rows.length === 1 ? "" : "s"} in this view</span></div>
           <button className="secondary-btn" type="button" aria-expanded={detailsVisible} onClick={() => setDetailsVisible((visible) => !visible)}>
@@ -971,17 +1150,18 @@ function VerticalReport({ page, reports, onExport }: { page: "recruiting" | "ori
         {detailsVisible && (
           <div className="table-wrap">
             <table className="data-table detail-data-table">
-              <thead><tr><th>Person</th>{columns.map((column) => <th key={column.key}>{column.label}</th>)}<th>Report date</th></tr></thead>
+              <thead><tr><th>Person</th><th>Latest journey stage</th>{columns.map((column) => <th key={column.key}>{column.label}</th>)}<th>Report date</th></tr></thead>
               <tbody>
                 {rows.map(({ report, row }) => {
                   const detail = String(row.data.email ?? row.data.phone_number ?? row.row_type);
                   return <tr className={`report-row report-row-${rowTone(row.data)}`} key={`${report.id}:${row.id}`}>
                     <td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><div><strong>{row.person_name ?? "Unnamed record"}</strong><div className="small-muted">{detail}</div></div></div></td>
+                    <td><JourneyStatus person={journeyPersonForRow(journey, row)} /></td>
                     {columns.map((column) => <td key={column.key}><DetailValue value={row.data[column.key] ?? (column.legacyKey ? row.data[column.legacyKey] : null)} date={column.date} status={column.status} /></td>)}
                     <td>{displayDate(report.report_date)}</td>
                   </tr>;
                 })}
-                {!rows.length && <tr><td colSpan={columns.length + 2}><EmptyState title="No report rows yet" copy="Published records for this vertical will appear here." /></td></tr>}
+                {!rows.length && <tr><td colSpan={columns.length + 3}><EmptyState title="No report rows yet" copy="Published records for this vertical will appear here." /></td></tr>}
               </tbody>
             </table>
           </div>
@@ -996,8 +1176,9 @@ function VerticalReport({ page, reports, onExport }: { page: "recruiting" | "ori
   );
 }
 
-function TimeAttendance({ reports, verdicts, onVerdict }: { reports: PublishedReport[]; verdicts: Record<string, Verdict>; onVerdict: (id: string, verdict: Verdict) => void }) {
+function TimeAttendance({ reports, journeyReports, verdicts, onVerdict }: { reports: PublishedReport[]; journeyReports: PublishedReport[]; verdicts: Record<string, Verdict>; onVerdict: (id: string, verdict: Verdict) => void }) {
   const [detailsVisible, setDetailsVisible] = useState(false);
+  const journey = useMemo(() => buildApplicantJourney(journeyReports), [journeyReports]);
   const matching = reportsForPage(reports, "time");
   const latest = matching[0];
   const metrics = latest
@@ -1012,18 +1193,20 @@ function TimeAttendance({ reports, verdicts, onVerdict }: { reports: PublishedRe
         <div className="panel-head"><div><h2>Time & Attendance</h2><p>Daily exceptions with client validation for potential time theft.</p></div><span className="pill">{awaitingReview} awaiting review</span></div>
         <div className="metric-strip">{metrics.map(([label, value]) => <div className={`metric-cell metric-tone-${metricTone(label, value)}`} key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
         <StatusLegend />
+        <div className="journey-explainer"><span className="journey-explainer-icon">↗</span><div><strong>Cross-vertical journey tracking</strong><p>Driver history remains intact while this page shows their latest linked operational stage.</p></div><span>{journey.people.length} linked people</span></div>
         <div className="report-detail-toolbar">
           <div><strong>Detailed attendance records</strong><span>{rows.length} record{rows.length === 1 ? "" : "s"} in this view</span></div>
           <button className="secondary-btn" type="button" aria-expanded={detailsVisible} onClick={() => setDetailsVisible((visible) => !visible)}>
             {detailsVisible ? "Hide detailed records" : "Show detailed records"}
           </button>
         </div>
-        {detailsVisible && <div className="table-wrap"><table className="data-table attendance-detail-table"><thead><tr><th>Station</th><th>Employee</th><th>Phone Number</th><th>Cortex App In</th><th>Cortex App Out</th><th>ADP Clock In</th><th>ADP Clock Out</th><th>Total Break Time Used</th><th>Comments</th><th>Sign In Difference</th><th>Sign Out Difference</th><th>Missed Punch In</th><th>Missed Punch Out</th><th>Follow up for Missed Punch In</th><th>Punch In Status</th><th>Follow up for Missed Punch Out</th><th>Punch Out Status</th><th>Possible Time Theft</th><th>Sent To Dispatch</th><th>Report Date</th><th>Client Decision</th></tr></thead><tbody>
+        {detailsVisible && <div className="table-wrap"><table className="data-table attendance-detail-table"><thead><tr><th>Station</th><th>Employee</th><th>Latest journey stage</th><th>Phone Number</th><th>Cortex App In</th><th>Cortex App Out</th><th>ADP Clock In</th><th>ADP Clock Out</th><th>Total Break Time Used</th><th>Comments</th><th>Sign In Difference</th><th>Sign Out Difference</th><th>Missed Punch In</th><th>Missed Punch Out</th><th>Follow up for Missed Punch In</th><th>Punch In Status</th><th>Follow up for Missed Punch Out</th><th>Punch Out Status</th><th>Possible Time Theft</th><th>Sent To Dispatch</th><th>Report Date</th><th>Client Decision</th></tr></thead><tbody>
           {rows.map(({ report, row }) => {
             const verdict = verdicts[row.id] ?? "pending";
             return <tr className={`report-row report-row-${verdict === "invalid" ? "danger" : verdict === "valid" ? "success" : rowTone(row.data)}`} key={row.id}>
               <td><DetailValue value={row.data.station} /></td>
               <td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><strong>{row.person_name ?? "Unnamed employee"}</strong></div></td>
+              <td><JourneyStatus person={journeyPersonForRow(journey, row)} /></td>
               <td><DetailValue value={row.data.phone_number} /></td>
               <td><DetailValue value={row.data.cortex_app_in} /></td>
               <td><DetailValue value={row.data.cortex_app_out} /></td>
@@ -1045,11 +1228,119 @@ function TimeAttendance({ reports, verdicts, onVerdict }: { reports: PublishedRe
               <td><div className="validation-btns"><button className={`valid-btn ${verdict === "valid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "valid")}>Valid</button><button className={`invalid-btn ${verdict === "invalid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "invalid")}>Invalid</button></div></td>
             </tr>;
           })}
-          {!rows.length && <tr><td colSpan={21}><EmptyState title="No time and attendance exceptions" copy="Uploaded and published exceptions will appear here for client review." /></td></tr>}
+          {!rows.length && <tr><td colSpan={22}><EmptyState title="No time and attendance exceptions" copy="Uploaded and published exceptions will appear here for client review." /></td></tr>}
         </tbody></table></div>}
         <GeneratedRecordLists verticalId={verticalOptions[3].id} rows={generatedRows} title="Client attendance lists" />
       </section>
       <aside className="side-stack"><section className="panel side-panel"><div className="panel-head"><div><h3>Compliance summary</h3><p>Last 30 days</p></div></div><EmptyState title="No compliance data" copy="Compliance rates will be calculated from published reports." /></section><section className="panel side-panel"><div className="panel-head"><div><h3>Decision requirement</h3></div></div><div className="note-box">Invalid and Needs More Information decisions require a client comment. VINE Pulse records the decision-maker and timestamp in the audit history.</div></section></aside>
+    </div>
+  );
+}
+
+function AnalyticsDashboard({ reports }: { reports: PublishedReport[] }) {
+  const journey = useMemo(() => buildApplicantJourney(reports), [reports]);
+  const funnelStages = journeyStages.slice(0, 6);
+  const counts = new Map<JourneyStage, number>(
+    funnelStages.map((stage) => [stage.id, journey.people.filter((person) => person.reached.has(stage.id)).length]),
+  );
+  const countFor = (stage: JourneyStage) => counts.get(stage) ?? 0;
+  const comparisons: { from: JourneyStage; to: JourneyStage; label: string }[] = [
+    { from: "contacted", to: "live_interviewed", label: "Contacted → Live interviewed" },
+    { from: "live_interviewed", to: "interview_passed", label: "Live interviewed → Passed interview" },
+    { from: "interview_passed", to: "training", label: "Passed interview → Training" },
+    { from: "training", to: "training_passed", label: "Training → Passed training" },
+    { from: "training_passed", to: "for_scheduling", label: "Passed training → For scheduling" },
+  ];
+  const interviewed = countFor("live_interviewed");
+  const scheduled = countFor("for_scheduling");
+  const mainMaximum = Math.max(interviewed, scheduled, 1);
+  const mainConversion = interviewed > 0 ? Math.round((scheduled / interviewed) * 100) : 0;
+  const stageMaximum = Math.max(...funnelStages.map((stage) => countFor(stage.id)), 1);
+  const trackedPeople = journey.people.filter((person) => funnelStages.some((stage) => person.reached.has(stage.id))).length;
+  const stageLabel = (id: JourneyStage) => journeyStages.find((stage) => stage.id === id)?.shortLabel ?? id;
+
+  return (
+    <div className="analytics-dashboard">
+      <section className="panel analytics-hero">
+        <div className="analytics-hero-copy">
+          <p className="eyebrow">Primary conversion</p>
+          <h2>Live interviewed <span>→</span> For scheduling</h2>
+          <p>The clearest end-to-end view of how live interviews become deployment-ready drivers.</p>
+          <div className="analytics-conversion-value"><strong>{mainConversion}%</strong><span>30-day conversion</span></div>
+          <div className="analytics-hero-meta">
+            <span><strong>{interviewed}</strong> live interviewed</span>
+            <span><strong>{scheduled}</strong> for scheduling</span>
+            <span><strong>{trackedPeople}</strong> unique people tracked</span>
+          </div>
+        </div>
+        <div className="analytics-main-chart" role="img" aria-label={`${interviewed} live interviewed compared with ${scheduled} for scheduling`}>
+          <div className="analytics-chart-grid"><span /><span /><span /><span /></div>
+          {[
+            { label: "Live interviewed", value: interviewed, tone: "interviewed" },
+            { label: "For scheduling", value: scheduled, tone: "scheduled" },
+          ].map((bar) => (
+            <div className="analytics-main-column" key={bar.label}>
+              <strong>{bar.value}</strong>
+              <div className={`analytics-main-bar analytics-main-bar-${bar.tone}`} style={{ height: `${Math.max((bar.value / mainMaximum) * 100, bar.value ? 8 : 2)}%` }} />
+              <span>{bar.label}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {!trackedPeople && <section className="panel"><EmptyState title="No applicant journey data yet" copy="Analytics will calculate automatically after individual Sourcing, Orientation, or Training records are published." /></section>}
+
+      <div className="analytics-layout">
+        <section className="panel analytics-funnel-panel">
+          <div className="panel-head"><div><p className="eyebrow">Pipeline progression</p><h3>Applicant-to-schedule funnel</h3><p>Unique people who reached each stage during the reporting window.</p></div><span className="pill">Identity matched</span></div>
+          <div className="analytics-funnel-bars">
+            {funnelStages.map((stage, index) => {
+              const value = countFor(stage.id);
+              const contacted = countFor("contacted");
+              const retention = contacted > 0 ? Math.round((value / contacted) * 100) : 0;
+              return (
+                <div className="analytics-funnel-row" key={stage.id}>
+                  <span className="analytics-stage-number">{String(index + 1).padStart(2, "0")}</span>
+                  <div className="analytics-stage-copy"><strong>{stage.label}</strong><span>{retention}% of contacted applicants</span></div>
+                  <div className="analytics-track"><span style={{ width: `${(value / stageMaximum) * 100}%` }} /></div>
+                  <strong className="analytics-stage-value">{value}</strong>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <aside className="panel analytics-quality-panel">
+          <p className="eyebrow">Data confidence</p>
+          <h3>Persistent journey history</h3>
+          <p>People are connected across verticals by email first, phone second, and normalized name last. Original report rows are never removed.</p>
+          <div className="analytics-confidence-list">
+            <span><i /> Retains every vertical record</span>
+            <span><i /> Uses the latest published stage</span>
+            <span><i /> Respects each client&apos;s vertical access</span>
+          </div>
+        </aside>
+      </div>
+
+      <section className="analytics-comparison-section">
+        <div className="panel-head"><div><p className="eyebrow">Stage comparisons</p><h2>Conversion performance</h2><p>Side-by-side results for every major handoff in the hiring journey.</p></div></div>
+        <div className="analytics-comparison-grid">
+          {comparisons.map((comparison) => {
+            const fromValue = countFor(comparison.from);
+            const toValue = countFor(comparison.to);
+            const maximum = Math.max(fromValue, toValue, 1);
+            const conversion = fromValue > 0 ? Math.round((toValue / fromValue) * 100) : 0;
+            return (
+              <article className="panel analytics-comparison-card" key={comparison.label}>
+                <div className="analytics-comparison-head"><span>{comparison.label}</span><strong>{conversion}%</strong></div>
+                <div className="analytics-comparison-bar"><span className="comparison-from" style={{ width: `${(fromValue / maximum) * 100}%` }} /></div>
+                <div className="analytics-comparison-bar"><span className="comparison-to" style={{ width: `${(toValue / maximum) * 100}%` }} /></div>
+                <div className="analytics-comparison-values"><span>{stageLabel(comparison.from)} <strong>{fromValue}</strong></span><span>{stageLabel(comparison.to)} <strong>{toValue}</strong></span></div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }
@@ -1312,6 +1603,7 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
     ? availableReportDates[0] ?? ""
     : reportDate;
   const visibleReports = reportsForDate(reports, selectedReportDate);
+  const allowedReports = reports.filter((report) => enabledVerticalIds(selectedClient).includes(report.vertical_id));
 
   if (!selectedClient) {
     return (
@@ -1325,7 +1617,7 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
 
   const clientPageTitle = clientPage === "overview"
     ? "Operations overview"
-    : [...navItems, amazonVsAdpNavItem].find((item) => item.id === clientPage)?.label ?? "Operations";
+    : [...navItems, analyticsNavItem, amazonVsAdpNavItem].find((item) => item.id === clientPage)?.label ?? "Operations";
 
   async function exportClientDashboard(format: ExportFormat) {
     try {
@@ -1397,12 +1689,14 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
             <div>
               <p className="eyebrow">{selectedClient.company_name} · Daily report</p>
               <h1>{clientPageTitle}</h1>
-              <p>{selectedReportDate
-                ? `Showing the published report for ${displayDate(selectedReportDate)}, with the rolling 30-day comparison retained in the overview.`
-                : "Showing all published reports in the rolling 30-day window."}</p>
+              <p>{clientPage === "analytics"
+                ? "Identity-matched conversion analytics across the latest 30 days of published reports."
+                : selectedReportDate
+                  ? `Showing the published report for ${displayDate(selectedReportDate)}, with the rolling 30-day comparison retained in the overview.`
+                  : "Showing all published reports in the rolling 30-day window."}</p>
             </div>
             <div className="heading-actions">
-              <ReportDayControl reports={reports} value={selectedReportDate} onChange={setReportDate} />
+              {clientPage !== "analytics" && <ReportDayControl reports={reports} value={selectedReportDate} onChange={setReportDate} />}
               <ExportControl onExport={exportClientDashboard} />
             </div>
           </div>
@@ -1412,12 +1706,14 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
           ) : (
             <>
               {clientPage === "overview" && <Overview onOpen={setClientPage} reports={visibleReports} historyReports={reports} selectedDate={selectedReportDate} allowedVerticalIds={enabledVerticalIds(selectedClient)} />}
+              {clientPage === "analytics" && <AnalyticsDashboard reports={allowedReports} />}
               {(clientPage === "recruiting" || clientPage === "orientation" || clientPage === "training") && (
-                <VerticalReport page={clientPage} reports={visibleReports} onExport={exportClientDashboard} />
+                <VerticalReport page={clientPage} reports={visibleReports} journeyReports={allowedReports} onExport={exportClientDashboard} />
               )}
               {clientPage === "time" && (
                 <TimeAttendance
                   reports={visibleReports}
+                  journeyReports={allowedReports}
                   verdicts={verdicts}
                   onVerdict={(id, verdict) => {
                     setVerdicts((current) => ({ ...current, [id]: verdict }));
