@@ -88,7 +88,7 @@ const verticalTemplateMeta: Record<string, { filename: string; summary: string }
   },
   "00000000-0000-4000-8000-000000000102": {
     filename: "Vertical 2 - Orientation and ADP Set-up.xlsx",
-    summary: "Orientation, safety standard, ADP payroll, training schedule, and remarks / 13 mapped fields",
+    summary: "Orientation, safety standard, ADP payroll, Day 1 and Day 2 training schedules, and remarks / 14 mapped fields",
   },
   "00000000-0000-4000-8000-000000000103": {
     filename: "Vertical 3 - Training, ORE, and Scheduling.xlsx",
@@ -323,7 +323,7 @@ function mergeReportRows(rows: SavedRow[]) {
 
 const detailColumns: Record<
   "recruiting" | "orientation" | "training",
-  { key: string; label: string; date?: boolean; status?: boolean }[]
+  { key: string; label: string; legacyKey?: string; date?: boolean; status?: boolean }[]
 > = {
   recruiting: [
     { key: "scheduled_interview", label: "Interview booking", date: true },
@@ -337,7 +337,8 @@ const detailColumns: Record<
     { key: "orientation_completed", label: "Orientation completed", date: true },
     { key: "adp_payroll_setup", label: "ADP setup", date: true },
     { key: "adp_payroll_completed", label: "ADP completed", date: true },
-    { key: "training_schedule", label: "Training schedule" },
+    { key: "day_1_training_schedule", legacyKey: "training_schedule", label: "Day 1 training", date: true },
+    { key: "day_2_training_schedule", label: "Day 2 training", date: true },
     { key: "remarks", label: "Remarks", status: true },
   ],
   training: [
@@ -976,7 +977,7 @@ function VerticalReport({ page, reports, onExport }: { page: "recruiting" | "ori
                   const detail = String(row.data.email ?? row.data.phone_number ?? row.row_type);
                   return <tr className={`report-row report-row-${rowTone(row.data)}`} key={`${report.id}:${row.id}`}>
                     <td><div className="person-cell"><span className="person-avatar">{initials(row.person_name ?? "VP")}</span><div><strong>{row.person_name ?? "Unnamed record"}</strong><div className="small-muted">{detail}</div></div></div></td>
-                    {columns.map((column) => <td key={column.key}><DetailValue value={row.data[column.key]} date={column.date} status={column.status} /></td>)}
+                    {columns.map((column) => <td key={column.key}><DetailValue value={row.data[column.key] ?? (column.legacyKey ? row.data[column.legacyKey] : null)} date={column.date} status={column.status} /></td>)}
                     <td>{displayDate(report.report_date)}</td>
                   </tr>;
                 })}
