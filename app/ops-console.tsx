@@ -775,9 +775,7 @@ export function OpsConsole() {
 function ConfigurationRequired() {
   return (
     <main className="login-shell">
-      <section className="login-brand-panel">
-        <Image src="/vine-pulse-logo.png" width={1680} height={908} priority alt="VINE Pulse - Client Reporting and Operations Portal" />
-      </section>
+      <LoginBrandPanel />
       <section className="login-form-panel">
         <div className="login-card">
           <p className="eyebrow">Configuration required</p>
@@ -805,14 +803,7 @@ function LoginScreen({ onMessage }: { onMessage: (message: string) => void }) {
 
   return (
     <main className="login-shell">
-      <section className="login-brand-panel">
-        <Image src="/vine-pulse-logo.png" width={1680} height={908} priority alt="VINE Pulse - Client Reporting and Operations Portal" />
-        <div className="login-proof">
-          <span>Secure client separation</span>
-          <span>Daily 5 PM ET deadline</span>
-          <span>30-day reporting</span>
-        </div>
-      </section>
+      <LoginBrandPanel />
       <section className="login-form-panel">
         <form className="login-card" onSubmit={signIn}>
           <p className="eyebrow">Welcome back</p>
@@ -825,6 +816,24 @@ function LoginScreen({ onMessage }: { onMessage: (message: string) => void }) {
         </form>
       </section>
     </main>
+  );
+}
+
+function LoginBrandPanel() {
+  return (
+    <section className="login-brand-panel">
+      <Image src="/vine-pulse-logo.png" width={1680} height={908} priority alt="VINE Pulse - Client Reporting and Operations Portal" />
+      <div className="login-brand-copy">
+        <p className="eyebrow">Operations intelligence, connected</p>
+        <h1>One pulse across every client operation.</h1>
+        <p>Recruiting, onboarding, training, scheduling, and attendance—secured in one clear daily reporting system.</p>
+      </div>
+      <div className="login-proof">
+        <span>Secure client separation</span>
+        <span>Daily 5 PM ET deadline</span>
+        <span>30-day reporting</span>
+      </div>
+    </section>
   );
 }
 
