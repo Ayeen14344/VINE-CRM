@@ -4799,6 +4799,38 @@ textarea:focus-visible {
   }
 }
 
+/* Keep the deadline card in the sidebar flow so it can never cover navigation. */
+.sidebar {
+  display: flex;
+  height: 100svh;
+  min-height: 0;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.sidebar .brand,
+.sidebar .nav-label,
+.sidebar .nav {
+  flex: 0 0 auto;
+}
+
+.sidebar-note {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  width: 100%;
+  flex: 0 0 auto;
+  margin: auto 0 0;
+}
+
+@media (max-height: 560px) {
+  .sidebar-note {
+    margin-top: 20px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
