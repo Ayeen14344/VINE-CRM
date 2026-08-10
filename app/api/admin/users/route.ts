@@ -15,9 +15,11 @@ type DeleteUserPayload = {
 };
 
 type UpdateEmployeeAccessPayload = {
+  action?: "update_employee_access" | "update_password";
   userId?: string;
   verticalId?: string;
   clientIds?: string[];
+  password?: string;
 };
 
 function serverClient() {
@@ -282,6 +284,47 @@ export async function PATCH(request: Request) {
 
   const payload = (await request.json()) as UpdateEmployeeAccessPayload;
   const userId = payload.userId?.trim();
+  const action = payload.action ?? "update_employee_access";
+
+  if (action === "update_password") {
+    const password = payload.password ?? "";
+    if (!userId || password.length < 10) {
+      return Response.json(
+        { error: "Select a user and enter a new password of at least 10 characters." },
+        { status: 400 },
+      );
+    }
+
+    const { data: target, error: targetError } = await admin
+      .from("profiles")
+      .select("id, email, full_name, role, active")
+      .eq("id", userId)
+      .single();
+
+    if (targetError || !target?.active) {
+      return Response.json({ error: "The selected active user no longer exists." }, { status: 404 });
+    }
+
+    const { error: passwordError } = await admin.auth.admin.updateUserById(userId, {
+      password,
+    });
+    if (passwordError) {
+      return Response.json({ error: passwordError.message }, { status: 400 });
+    }
+
+    await admin.from("audit_log").insert({
+      actor_id: authData.user.id,
+      action: "user.password_updated",
+      entity_type: "profile",
+      entity_id: userId,
+      metadata: { email: target.email, role: target.role },
+    });
+
+    return Response.json({
+      user: { id: userId, email: target.email },
+    });
+  }
+
   const verticalId = payload.verticalId?.trim();
   const clientIds = Array.from(new Set((payload.clientIds ?? []).filter(Boolean)));
 
