@@ -54,7 +54,8 @@ export const gridColumns: Record<string, GridColumn[]> = {
     { key: "orientation_completed", label: "Orientation Completed", kind: "date", width: 185 },
     { key: "adp_payroll_setup", label: "ADP Payroll Set-up", kind: "date", width: 170 },
     { key: "adp_payroll_completed", label: "ADP Payroll Completed", kind: "date", width: 190 },
-    { key: "training_schedule", label: "Training Schedule", width: 170 },
+    { key: "day_1_training_schedule", label: "Day 1 Training Schedule", kind: "date", width: 190 },
+    { key: "day_2_training_schedule", label: "Day 2 Training Schedule", kind: "date", width: 190 },
     { key: "remarks", label: "Status / Remarks", kind: "select", options: completeStatuses, width: 165 },
     { key: "note", label: "Note", width: 220 },
   ],
@@ -243,6 +244,16 @@ export function applyVerticalFourFormulas(data: Record<string, ExtractedValue>) 
 
 export function normalizeWorkspaceRow(row: WorkspaceRow, verticalId: string) {
   const normalizedData = { ...row.data };
+  if (
+    verticalId.endsWith("0102") &&
+    normalizedData.training_schedule &&
+    !normalizedData.day_1_training_schedule &&
+    !normalizedData.day_2_training_schedule
+  ) {
+    // Preserve previously published Vertical 2 records by displaying the old
+    // combined schedule value in Day 1 until it is deliberately revised.
+    normalizedData.day_1_training_schedule = normalizedData.training_schedule;
+  }
   (gridColumns[verticalId] ?? []).forEach((column) => {
     if (column.kind === "date" && normalizedData[column.key]) {
       normalizedData[column.key] = normalizePastedDate(normalizedData[column.key]) || normalizedData[column.key];
@@ -326,8 +337,8 @@ export function generatedGroups(verticalId: string, rows: WorkspaceRow[]): Gener
       group("Orientation completed", "success", (row) => hasValue(row.data.orientation_completed), "orientation_completed"),
       group("ADP payroll set-up", "neutral", (row) => hasValue(row.data.adp_payroll_setup), "adp_payroll_setup"),
       group("ADP payroll completed", "success", (row) => hasValue(row.data.adp_payroll_completed), "adp_payroll_completed"),
-      group("Active trainees", "success", (row) => matches(row.data.training_schedule, "active"), "training_schedule"),
-      group("Scheduled for training", "neutral", (row) => hasValue(row.data.training_schedule) && !["active", "incomplete"].includes(normalized(row.data.training_schedule)), "training_schedule"),
+      group("Active trainees", "success", (row) => matches(row.data.training_schedule, "active") || matches(row.data.remarks, "active"), "day_1_training_schedule"),
+      group("Scheduled for training", "neutral", (row) => hasValue(row.data.day_1_training_schedule) || hasValue(row.data.day_2_training_schedule) || (hasValue(row.data.training_schedule) && !["active", "incomplete"].includes(normalized(row.data.training_schedule))), "day_1_training_schedule"),
       ...completeStatuses.map((status) =>
         group(status, status === "Completed" ? "success" : status === "Off-boarded" ? "danger" : "warning", (row) => matches(row.data.remarks, status), "remarks"),
       ),
