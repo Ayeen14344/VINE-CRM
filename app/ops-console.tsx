@@ -361,6 +361,7 @@ const journeyStages: { id: JourneyStage; label: string; shortLabel: string }[] =
   { id: "for_scheduling", label: "For scheduling", shortLabel: "For scheduling" },
   { id: "active_operations", label: "Active operations", shortLabel: "Active operations" },
 ];
+const analyticsFunnelStages = journeyStages.slice(0, 6);
 
 function normalizedIdentityValue(value: unknown) {
   return String(value ?? "")
@@ -391,6 +392,7 @@ function rowJourneyEvidence(report: PublishedReport, row: SavedRow): JourneyStag
 
   if (verticalIndex === 0) {
     const evidence: JourneyStage[] = ["contacted"];
+    if (isYes(row.data.interview_confirmed)) evidence.push("live_interviewed");
     if (/pass|fail|completed|attended/.test(interviewResult)) evidence.push("live_interviewed");
     if (/pass/.test(interviewResult) || isYes(row.data.cortex_onboarded) || /pass|clear|complete/.test(text(row.data.background_check)) || /pass|clear|complete/.test(text(row.data.drug_test))) {
       evidence.push("live_interviewed", "interview_passed");
@@ -1274,30 +1276,24 @@ function AnalyticsDashboard({ reports }: { reports: PublishedReport[] }) {
     && (!selectedRangeEnd || report.report_date <= selectedRangeEnd),
   ), [reports, selectedRangeEnd, selectedRangeStart]);
   const journey = useMemo(() => buildApplicantJourney(rangeReports), [rangeReports]);
-  const funnelStages = journeyStages.slice(0, 6);
+  const funnelStages = analyticsFunnelStages;
   const counts = useMemo(() => {
-    const sumMetric = (page: Page, metricKey: string) => reportsForPage(rangeReports, page)
-      .reduce((total, report) => total + report.report_metrics
-        .filter((metric) => metric.metric_key === metricKey)
-        .reduce((reportTotal, metric) => reportTotal + metricNumber(metric), 0), 0);
-    const hasValue = (value: unknown) => {
-      const normalized = String(value ?? "").trim().toLowerCase();
-      return Boolean(normalized && !["-", "n/a", "na", "not reported", "pending"].includes(normalized));
-    };
-    const orientationTrainingTotal = reportsForPage(rangeReports, "orientation")
-      .reduce((total, report) => total + report.report_rows
-        .filter((row) => hasValue(row.data.day_1_training_schedule) || hasValue(row.data.day_2_training_schedule))
-        .length, 0);
-    const scheduledTrainingTotal = sumMetric("training", "scheduled_for_training");
-    return new Map<JourneyStage, number>([
-      ["contacted", sumMetric("recruiting", "contacted_from_indeed")],
-      ["live_interviewed", sumMetric("recruiting", "moved_to_in_person_interview")],
-      ["interview_passed", sumMetric("recruiting", "interview_passed")],
-      ["training", scheduledTrainingTotal || orientationTrainingTotal],
-      ["training_passed", sumMetric("training", "training_passed")],
-      ["for_scheduling", sumMetric("training", "work_deployment")],
-    ]);
-  }, [rangeReports]);
+    const next = new Map<JourneyStage, number>(
+      funnelStages.map((stage) => [stage.id, journey.people.filter((person) => person.reached.has(stage.id)).length]),
+    );
+    const confirmedPeople = new Set<string>();
+    reportsForPage(rangeReports, "recruiting").forEach((report) => {
+      mergeReportRows(report.report_rows).forEach((row) => {
+        const confirmation = String(row.data.interview_confirmed ?? "").trim().toLowerCase();
+        if (!/^(yes|y|true|1|confirmed)$/.test(confirmation)) return;
+        const linkedPerson = journeyPersonForRow(journey, row);
+        const fallbackIdentity = personAliases(row)[0] ?? `row:${row.id}`;
+        confirmedPeople.add(linkedPerson?.id ?? fallbackIdentity);
+      });
+    });
+    next.set("live_interviewed", confirmedPeople.size);
+    return next;
+  }, [funnelStages, journey, rangeReports]);
   const countFor = (stage: JourneyStage) => counts.get(stage) ?? 0;
   const comparisons: { from: JourneyStage; to: JourneyStage; label: string }[] = [
     { from: "contacted", to: "live_interviewed", label: "Contacted → Live interviewed" },
@@ -1319,7 +1315,7 @@ function AnalyticsDashboard({ reports }: { reports: PublishedReport[] }) {
   return (
     <div className="analytics-dashboard">
       <section className="panel analytics-range-bar">
-        <div><p className="eyebrow">Analytics reporting window</p><h3>Sum all published report information</h3><p>Every daily report total inside this range is included in the funnel and conversion graphs.</p></div>
+        <div><p className="eyebrow">Analytics reporting window</p><h3>Count unique people across all reports</h3><p>Live interviewed counts only unique Sourcing & Hiring records where Confirmed Interview is Yes or Confirmed.</p></div>
         <div className="analytics-range-controls">
           <label><span>From</span><input type="date" value={selectedRangeStart} min={earliestDate} max={selectedRangeEnd || latestDate} disabled={!availableDates.length} onChange={(event) => setRangeStart(event.target.value)} /></label>
           <label><span>To</span><input type="date" value={selectedRangeEnd} min={selectedRangeStart || earliestDate} max={latestDate} disabled={!availableDates.length} onChange={(event) => setRangeEnd(event.target.value)} /></label>
@@ -1359,14 +1355,14 @@ function AnalyticsDashboard({ reports }: { reports: PublishedReport[] }) {
 
       <div className="analytics-layout">
         <section className="panel analytics-funnel-panel">
-          <div className="panel-head"><div><p className="eyebrow">Pipeline progression</p><h3>Applicant-to-schedule funnel</h3><p>Summed totals from every published report inside the selected reporting window.</p></div><span className="pill">{selectedRangeStart && selectedRangeEnd ? `${displayDate(selectedRangeStart)} - ${displayDate(selectedRangeEnd)}` : "No reports"}</span></div>
+          <div className="panel-head"><div><p className="eyebrow">Pipeline progression</p><h3>Applicant-to-schedule funnel</h3><p>Unique people matched across every published report inside the selected reporting window.</p></div><span className="pill">{selectedRangeStart && selectedRangeEnd ? `${displayDate(selectedRangeStart)} - ${displayDate(selectedRangeEnd)}` : "No reports"}</span></div>
           <div className="analytics-funnel-bars">
             {funnelStages.map((stage, index) => {
               const value = countFor(stage.id);
               const contacted = countFor("contacted");
               const retention = contacted > 0 ? Math.round((value / contacted) * 100) : 0;
               const source = stage.id === "live_interviewed"
-                ? "Sum of Moved to In-person Interview"
+                ? "Unique drivers with Confirmed Interview = Yes"
                 : `${retention}% of contacted applicants`;
               return (
                 <div className="analytics-funnel-row" key={stage.id}>
@@ -1382,12 +1378,12 @@ function AnalyticsDashboard({ reports }: { reports: PublishedReport[] }) {
 
         <aside className="panel analytics-quality-panel">
           <p className="eyebrow">Data confidence</p>
-          <h3>Complete range totals</h3>
-          <p className="analytics-range-explainer">Live interviewed is the sum of every published Moved to In-person Interview metric in the chosen range. The same summed-report method is used for each funnel stage.</p>
+          <h3>Unique applicant journey</h3>
+          <p className="analytics-range-explainer">People are matched by email, then phone, then normalized name. Live interviewed uses only the Confirmed Interview field and counts each confirmed driver once.</p>
           <p>Live interviewed now comes directly from the published “Moved to In-person Interview” total. Other journey stages connect people by email, phone, then normalized name.</p>
           <div className="analytics-confidence-list">
             <span><i /> Includes every report day in range</span>
-            <span><i /> Uses summed published totals</span>
+            <span><i /> Live interview requires confirmation</span>
             <span><i /> Respects each client&apos;s vertical access</span>
           </div>
         </aside>
