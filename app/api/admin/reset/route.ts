@@ -191,6 +191,17 @@ export async function POST(request: Request) {
     });
   }
 
+  try {
+    const taskFiles = await listAllFiles("task-attachments");
+    for (const batch of chunks(taskFiles, 100)) {
+      const { error } = await admin.storage.from("task-attachments").remove(batch);
+      if (error) storageWarnings.push(error.message);
+      else filesDeleted += batch.length;
+    }
+  } catch (error) {
+    storageWarnings.push(error instanceof Error ? error.message : "The task attachment bucket could not be cleared.");
+  }
+
   const {
     count: clientsDeleted,
     error: clientDeleteError,
