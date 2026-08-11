@@ -5,7 +5,7 @@ import type { PortalProfile } from "../lib/supabase-browser";
 import { supabase } from "../lib/supabase-browser";
 
 type WorkspaceRole = "admin" | "employee" | "client";
-type WorkspaceClient = { id: string; company_name: string };
+type WorkspaceClient = { id: string; company_name: string; enabled_vertical_ids?: string[] | null };
 type SharedWorkspaceProps = {
   clients: WorkspaceClient[];
   client?: WorkspaceClient;
@@ -33,6 +33,7 @@ type TaskAttachment = { id: string; storage_path: string; file_name: string; fil
 type ClientTask = {
   id: string;
   client_id: string;
+  vertical_id: string | null;
   title: string;
   description: string;
   urgency: TaskUrgency;
@@ -47,6 +48,17 @@ type ClientTask = {
   task_comments: TaskComment[];
   task_attachments: TaskAttachment[];
 };
+
+const taskVerticalOptions = [
+  { id: "00000000-0000-4000-8000-000000000101", name: "Sourcing & Hiring" },
+  { id: "00000000-0000-4000-8000-000000000102", name: "Orientation & ADP Setup" },
+  { id: "00000000-0000-4000-8000-000000000103", name: "Training, ORE & Work Scheduling" },
+  { id: "00000000-0000-4000-8000-000000000104", name: "Time & Attendance" },
+];
+
+function taskVerticalName(verticalId: string | null) {
+  return taskVerticalOptions.find((vertical) => vertical.id === verticalId)?.name ?? "Unassigned vertical";
+}
 
 const boardColumns: { id: TaskStatus; label: string; short: string }[] = [
   { id: "pending", label: "Pending", short: "PN" },
@@ -260,15 +272,25 @@ export function CredentialVault(props: SharedWorkspaceProps) {
 export function ProjectBoard(props: SharedWorkspaceProps) {
   const { onMessage } = props;
   const { activeClientId, activeClient, setAdminClientId } = useActiveClient(props);
-  const [tasks, setTasks] = useState<ClientTask[]>([]);
+  const [allTasks, setTasks] = useState<ClientTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [expandedTask, setExpandedTask] = useState<string | null>(null);
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [uploadingTask, setUploadingTask] = useState<string | null>(null);
-  const [form, setForm] = useState<{ title: string; description: string; urgency: TaskUrgency; recurrence: TaskRecurrence; dueDate: string }>({ title: "", description: "", urgency: "normal", recurrence: "one_time", dueDate: "" });
+  const [verticalFilter, setVerticalFilter] = useState("all");
+  const [form, setForm] = useState<{ title: string; description: string; verticalId: string; urgency: TaskUrgency; recurrence: TaskRecurrence; dueDate: string }>({ title: "", description: "", verticalId: "", urgency: "normal", recurrence: "one_time", dueDate: "" });
   const canCreateTasks = props.role === "admin" || props.role === "client";
+  const availableVerticals = useMemo(() => {
+    if (props.role === "employee") {
+      return taskVerticalOptions.filter((vertical) => vertical.id === props.profile.vertical_id);
+    }
+    const enabled = activeClient?.enabled_vertical_ids;
+    return enabled?.length
+      ? taskVerticalOptions.filter((vertical) => enabled.includes(vertical.id))
+      : taskVerticalOptions;
+  }, [activeClient?.enabled_vertical_ids, props.profile.vertical_id, props.role]);
 
   const loadTasks = useCallback(async () => {
     if (!activeClientId || !supabase) {
@@ -277,29 +299,45 @@ export function ProjectBoard(props: SharedWorkspaceProps) {
       return;
     }
     setLoading(true);
-    const { data, error } = await supabase
+    let query = supabase
       .from("client_tasks")
-      .select("id, client_id, title, description, urgency, task_status, recurrence, due_date, created_by, created_by_name, completed_at, created_at, updated_at, task_comments(id, author_name, body, created_at), task_attachments(id, storage_path, file_name, file_size, uploaded_by_name, created_at)")
+      .select("id, client_id, vertical_id, title, description, urgency, task_status, recurrence, due_date, created_by, created_by_name, completed_at, created_at, updated_at, task_comments(id, author_name, body, created_at), task_attachments(id, storage_path, file_name, file_size, uploaded_by_name, created_at)")
       .eq("client_id", activeClientId)
       .order("created_at", { ascending: false });
+    if (props.role === "employee" && props.profile.vertical_id) {
+      query = query.eq("vertical_id", props.profile.vertical_id);
+    }
+    const { data, error } = await query;
     if (error) onMessage(error.message);
     setTasks((data ?? []) as ClientTask[]);
     setLoading(false);
-  }, [activeClientId, onMessage]);
+  }, [activeClientId, onMessage, props.profile.vertical_id, props.role]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void loadTasks(); }, 0);
     return () => window.clearTimeout(timer);
   }, [loadTasks]);
 
-  const counts = useMemo(() => Object.fromEntries(boardColumns.map((column) => [column.id, tasks.filter((task) => task.task_status === column.id).length])) as Record<TaskStatus, number>, [tasks]);
+  const selectedTaskVerticalId = availableVerticals.some((vertical) => vertical.id === form.verticalId)
+    ? form.verticalId
+    : availableVerticals[0]?.id ?? "";
+  const selectedVerticalFilter = verticalFilter === "all" || availableVerticals.some((vertical) => vertical.id === verticalFilter)
+    ? verticalFilter
+    : "all";
+  const visibleTasks = useMemo(
+    () => selectedVerticalFilter === "all" ? allTasks : allTasks.filter((task) => task.vertical_id === selectedVerticalFilter),
+    [allTasks, selectedVerticalFilter],
+  );
+  const tasks = visibleTasks;
+  const counts = useMemo(() => Object.fromEntries(boardColumns.map((column) => [column.id, visibleTasks.filter((task) => task.task_status === column.id).length])) as Record<TaskStatus, number>, [visibleTasks]);
 
   async function createTask(event: React.FormEvent) {
     event.preventDefault();
-    if (!supabase || !activeClientId || !canCreateTasks) return;
+    if (!supabase || !activeClientId || !canCreateTasks || !selectedTaskVerticalId) return;
     setSaving(true);
     const { error } = await supabase.from("client_tasks").insert({
       client_id: activeClientId,
+      vertical_id: selectedTaskVerticalId,
       title: form.title.trim(),
       description: form.description.trim(),
       urgency: form.urgency,
@@ -310,7 +348,7 @@ export function ProjectBoard(props: SharedWorkspaceProps) {
     });
     setSaving(false);
     if (error) { props.onMessage(error.message); return; }
-    setForm({ title: "", description: "", urgency: "normal", recurrence: "one_time", dueDate: "" });
+    setForm({ title: "", description: "", verticalId: availableVerticals[0]?.id ?? "", urgency: "normal", recurrence: "one_time", dueDate: "" });
     setFormOpen(false);
     props.onMessage("Task added to the shared board.");
     await loadTasks();
@@ -393,11 +431,17 @@ export function ProjectBoard(props: SharedWorkspaceProps) {
     <div className="collaboration-workspace task-workspace">
       <WorkspaceHeader eyebrow="Shared operations" title="VINE Tasks" copy="A client-to-support workspace for requests, questions, files, urgency, and recurring work." activeClient={activeClient} clients={props.clients} role={props.role} clientId={activeClientId} onClientChange={setAdminClientId} action={canCreateTasks ? <button className="primary-btn" type="button" onClick={() => setFormOpen(true)} disabled={!activeClientId}>+ Add task</button> : undefined} />
 
+      <section className="task-board-controls panel">
+        <div><p className="eyebrow">Task routing</p><strong>{props.role === "employee" ? `Tasks sent to ${availableVerticals[0]?.name ?? "your vertical"}` : "Filter the board by support vertical"}</strong></div>
+        {props.role !== "employee" && <label><span>Vertical</span><select value={selectedVerticalFilter} onChange={(event) => setVerticalFilter(event.target.value)}><option value="all">All verticals</option>{availableVerticals.map((vertical) => <option key={vertical.id} value={vertical.id}>{vertical.name}</option>)}</select></label>}
+      </section>
+
       <section className="task-summary-strip">{boardColumns.map((column) => <article className={`panel task-summary task-summary-${column.id}`} key={column.id}><span>{column.short}</span><div><strong>{counts[column.id]}</strong><small>{column.label}</small></div></article>)}</section>
 
       {formOpen && <section className="panel task-editor"><div className="panel-head"><div><p className="eyebrow">New request</p><h2>Create a shared task</h2><p>Add urgency, recurrence, and a due date before sending it to the support board.</p></div><button className="secondary-btn" type="button" onClick={() => setFormOpen(false)}>Close</button></div><form className="task-form" onSubmit={createTask}>
         <label className="task-title-field"><span>Task title</span><input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="What needs to be completed?" /></label>
         <label className="task-description-field"><span>Description</span><textarea required value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Add instructions, expected result, and any questions." /></label>
+        <label className="task-vertical-field"><span>Send to vertical</span><select required value={selectedTaskVerticalId} onChange={(event) => setForm({ ...form, verticalId: event.target.value })}><option value="" disabled>Choose a support vertical</option>{availableVerticals.map((vertical) => <option key={vertical.id} value={vertical.id}>{vertical.name}</option>)}</select></label>
         <label><span>Urgency</span><select value={form.urgency} onChange={(event) => setForm({ ...form, urgency: event.target.value as TaskUrgency })}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="critical">Critical</option></select></label>
         <label><span>Task type</span><select value={form.recurrence} onChange={(event) => setForm({ ...form, recurrence: event.target.value as TaskRecurrence })}><option value="one_time">One-time task</option><option value="daily">Recurring daily</option><option value="weekly">Recurring weekly</option><option value="monthly">Recurring monthly</option></select></label>
         <label><span>Due date</span><input type="date" value={form.dueDate} onChange={(event) => setForm({ ...form, dueDate: event.target.value })} /></label>
@@ -408,6 +452,7 @@ export function ProjectBoard(props: SharedWorkspaceProps) {
         const expanded = expandedTask === task.id;
         return <article className={`panel task-card urgency-${task.urgency}`} key={task.id}>
           <div className="task-card-top"><span className={`urgency-pill urgency-pill-${task.urgency}`}>{task.urgency}</span><span className="recurrence-pill">{task.recurrence === "one_time" ? "One time" : `↻ ${task.recurrence}`}</span></div>
+          <span className="task-vertical-pill">{taskVerticalName(task.vertical_id)}</span>
           <h3>{task.title}</h3><p>{task.description}</p>
           <div className="task-meta"><span>Due <strong>{formatWorkspaceDate(task.due_date)}</strong></span><span>By <strong>{task.created_by_name || "Client"}</strong></span></div>
           <div className="task-card-counts"><span>{task.task_comments.length} comments</span><span>{task.task_attachments.length} files</span></div>

@@ -21,6 +21,29 @@ type SavedRow = {
   person_name: string | null;
   data: Record<string, ExtractedValue>;
 };
+type HistoricalReport = {
+  id: string;
+  report_date: string;
+  version: number;
+  report_rows: SavedRow[];
+};
+type HistoricalMatch = {
+  reportId: string;
+  reportDate: string;
+  version: number;
+  row: SavedRow;
+};
+
+function dateInputDaysAgo(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date.toISOString().slice(0, 10);
+}
+
+function shortReportDate(value: string) {
+  const parsed = new Date(`${value}T12:00:00`);
+  return Number.isNaN(parsed.valueOf()) ? value : parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
 
 function initials(name: string) {
   return name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
@@ -118,6 +141,12 @@ export function EmployeeDataWorkspace({
   const [filterMenuKey, setFilterMenuKey] = useState<string | null>(null);
   const [filterSearch, setFilterSearch] = useState("");
   const [draftFilterValues, setDraftFilterValues] = useState<string[]>([]);
+  const [currentRowSearch, setCurrentRowSearch] = useState("");
+  const [historyStart, setHistoryStart] = useState(dateInputDaysAgo(89));
+  const [historyEnd, setHistoryEnd] = useState(new Date().toISOString().slice(0, 10));
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyReports, setHistoryReports] = useState<HistoricalReport[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [importingFile, setImportingFile] = useState(false);
   const [fileInputKey, setFileInputKey] = useState(0);
@@ -134,12 +163,26 @@ export function EmployeeDataWorkspace({
     return options;
   }, [columns, rows]);
 
-  const filteredRows = useMemo(
-    () => rows.filter((row) => Object.entries(columnFilters).every(([key, acceptedValues]) =>
-      acceptedValues.includes(filterValue(row.data[key])),
-    )),
-    [columnFilters, rows],
-  );
+  const filteredRows = useMemo(() => {
+    const query = currentRowSearch.trim().toLowerCase();
+    return rows.filter((row) => {
+      const passesColumns = Object.entries(columnFilters).every(([key, acceptedValues]) =>
+        acceptedValues.includes(filterValue(row.data[key])));
+      if (!passesColumns || !query) return passesColumns;
+      return [row.personName, ...Object.values(row.data)]
+        .some((value) => valueText(value).toLowerCase().includes(query));
+    });
+  }, [columnFilters, currentRowSearch, rows]);
+
+  const historyMatches = useMemo<HistoricalMatch[]>(() => {
+    const query = historySearch.trim().toLowerCase();
+    if (!query) return [];
+    return historyReports.flatMap((report) => report.report_rows
+      .filter((row) => [row.person_name, ...Object.values(row.data)]
+        .some((value) => valueText(value).toLowerCase().includes(query)))
+      .map((row) => ({ reportId: report.id, reportDate: report.report_date, version: report.version, row })))
+      .slice(0, 50);
+  }, [historyReports, historySearch]);
 
   const allRowsSelected = filteredRows.length > 0 && filteredRows.every((row) => selectedRows.has(row.id));
 
@@ -175,6 +218,40 @@ export function EmployeeDataWorkspace({
     })();
     return () => { active = false; };
   }, [client.id, onMessage, reportDate, verticalId]);
+
+  useEffect(() => {
+    if (!supabase || !historyStart || !historyEnd || historyStart > historyEnd) return;
+    const portalClient = supabase;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setHistoryLoading(true);
+      void (async () => {
+        const { data, error } = await portalClient
+          .from("reports")
+          .select("id, report_date, version, report_rows(id, person_name, data)")
+          .eq("client_id", client.id)
+          .eq("vertical_id", verticalId)
+          .eq("status", "published")
+          .gte("report_date", historyStart)
+          .lte("report_date", historyEnd)
+          .order("report_date", { ascending: false })
+          .order("version", { ascending: false });
+        if (!active) return;
+        if (error) {
+          setHistoryReports([]);
+          onMessage(`Saved record search could not be loaded: ${error.message}`);
+        } else {
+          const latestByDate = new Map<string, HistoricalReport>();
+          ((data ?? []) as unknown as HistoricalReport[]).forEach((report) => {
+            if (!latestByDate.has(report.report_date)) latestByDate.set(report.report_date, report);
+          });
+          setHistoryReports(Array.from(latestByDate.values()));
+        }
+        setHistoryLoading(false);
+      })();
+    }, 0);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [client.id, historyEnd, historyStart, onMessage, verticalId]);
 
   const realRows = useMemo(
     () => toExtractedRows(rows, verticalId),
@@ -422,6 +499,18 @@ export function EmployeeDataWorkspace({
     onMessage(`${client.company_name} updated successfully. The client can now see version ${nextVersion}.`);
   };
 
+  const openHistoricalMatch = (match: HistoricalMatch) => {
+    const searchValue = match.row.person_name
+      || valueText(match.row.data.email)
+      || valueText(match.row.data.phone_number);
+    setCurrentRowSearch(searchValue);
+    setColumnFilters({});
+    setFilterMenuKey(null);
+    setReportDate(match.reportDate);
+    onMessage(`Opened ${match.row.person_name || "the selected record"} from ${shortReportDate(match.reportDate)} for editing.`);
+    window.setTimeout(() => document.getElementById("current-report-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  };
+
   return (
     <>
       <div className="active-dsp-banner">
@@ -437,9 +526,41 @@ export function EmployeeDataWorkspace({
         <span className="pill">Version {latestVersion || "new"}</span>
       </div>
 
-      <section className="panel workspace-sheet">
+      <section className="panel workspace-history-search" aria-label="Find saved driver or applicant records">
+        <div className="workspace-history-heading">
+          <div><p className="eyebrow">Saved record finder</p><h2>Find a driver or applicant to update</h2><p>Search the latest saved version of every report inside your selected date range. Opening a result keeps each report date separate and audit-safe.</p></div>
+          <span className="pill">{historyReports.length} report day{historyReports.length === 1 ? "" : "s"}</span>
+        </div>
+        <div className="workspace-history-controls">
+          <label><span>From</span><input type="date" value={historyStart} onChange={(event) => setHistoryStart(event.target.value)} max={historyEnd} /></label>
+          <label><span>To</span><input type="date" value={historyEnd} onChange={(event) => setHistoryEnd(event.target.value)} min={historyStart} /></label>
+          <label className="history-query"><span>Driver or applicant</span><input type="search" value={historySearch} onChange={(event) => setHistorySearch(event.target.value)} placeholder="Search name, email, phone, or status" /></label>
+          <button className="secondary-btn" type="button" onClick={() => { setHistoryStart(dateInputDaysAgo(89)); setHistoryEnd(new Date().toISOString().slice(0, 10)); }}>Last 90 days</button>
+        </div>
+        {historyStart > historyEnd && <p className="history-search-message history-search-error">The From date must be before the To date.</p>}
+        {historySearch.trim() && historyStart <= historyEnd && (
+          <div className="history-search-results">
+            <div className="history-results-head"><strong>{historyLoading ? "Searching saved reports..." : `${historyMatches.length} matching record${historyMatches.length === 1 ? "" : "s"}`}</strong><span>Choose a result to open that dated report</span></div>
+            {!historyLoading && historyMatches.slice(0, 12).map((match) => (
+              <button className="history-result" type="button" onClick={() => openHistoricalMatch(match)} key={`${match.reportId}:${match.row.id}`}>
+                <span className="mini-avatar">{initials(match.row.person_name || "VP")}</span>
+                <span><strong>{match.row.person_name || "Unnamed record"}</strong><small>{valueText(match.row.data.email) || valueText(match.row.data.phone_number) || "Saved report record"}</small></span>
+                <span><strong>{shortReportDate(match.reportDate)}</strong><small>Version {match.version}</small></span>
+                <b>Open & update</b>
+              </button>
+            ))}
+            {!historyLoading && !historyMatches.length && <p className="history-search-message">No matching record was found in this date range.</p>}
+            {historyMatches.length > 12 && <p className="history-search-message">Showing the first 12 matches. Refine the search to find a specific person.</p>}
+          </div>
+        )}
+      </section>
+
+      <section className="panel workspace-sheet" id="current-report-workspace">
         <div className="workspace-toolbar">
-          <label>Report date<input type="date" value={reportDate} onChange={(event) => setReportDate(event.target.value)} /></label>
+          <div className="workspace-editing-fields">
+            <label>Report being edited<input type="date" value={reportDate} onChange={(event) => setReportDate(event.target.value)} /></label>
+            <label>Search this report<input type="search" value={currentRowSearch} onChange={(event) => setCurrentRowSearch(event.target.value)} placeholder="Name, email, phone, or value" /></label>
+          </div>
           <div className="workspace-toolbar-actions">
             <button className="secondary-btn" onClick={() => setRows((current) => [...current, emptyWorkspaceRow()])}>+ Add row</button>
             <label className={`secondary-btn source-file-btn${importingFile ? " disabled" : ""}`}>
@@ -447,7 +568,7 @@ export function EmployeeDataWorkspace({
               <input key={fileInputKey} type="file" accept=".csv,.xlsx,.xls,.pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf" disabled={importingFile || saving} onChange={(event) => void importSourceFile(event.target.files?.[0])} />
             </label>
             <button className="secondary-btn" onClick={() => setPasteOpen(true)}>Paste Excel rows</button>
-            {activeFilterCount > 0 && <button className="secondary-btn clear-filters-btn" onClick={() => { setColumnFilters({}); setFilterMenuKey(null); }}>Clear filters ({activeFilterCount})</button>}
+            {(activeFilterCount > 0 || currentRowSearch) && <button className="secondary-btn clear-filters-btn" onClick={() => { setColumnFilters({}); setCurrentRowSearch(""); setFilterMenuKey(null); }}>Clear filters{activeFilterCount ? ` (${activeFilterCount})` : ""}</button>}
             <button className="bulk-delete-btn" disabled={!selectedRows.size} onClick={deleteSelectedRows}>Delete selected{selectedRows.size ? ` (${selectedRows.size})` : ""}</button>
             <button className="primary-btn" disabled={saving || loading} onClick={saveUpdate}>{saving ? "Saving…" : "Save & update client"}</button>
           </div>
@@ -517,7 +638,7 @@ export function EmployeeDataWorkspace({
           </table>
         </div>
         {loading && <div className="sheet-loading">Loading the latest report for this date…</div>}
-        <div className="workspace-foot"><span>{activeFilterCount ? `${filteredRows.length} of ${rows.length} row${rows.length === 1 ? "" : "s"} visible` : `${realRows.length} report record${realRows.length === 1 ? "" : "s"}`}</span><span>Filters only change this workspace view. Saving creates a new audit-safe version.</span></div>
+        <div className="workspace-foot"><span>{activeFilterCount || currentRowSearch ? `${filteredRows.length} of ${rows.length} row${rows.length === 1 ? "" : "s"} visible` : `${realRows.length} report record${realRows.length === 1 ? "" : "s"}`}</span><span>Filters only change this workspace view. Saving creates a new audit-safe version.</span></div>
       </section>
 
       <GeneratedRecordLists verticalId={verticalId} rows={rows.map((row) => normalizeWorkspaceRow(row, verticalId))} title={profile.role === "super_admin" ? "Super Admin report views" : "Employee report views"} />
