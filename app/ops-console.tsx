@@ -18,9 +18,10 @@ import {
   EmployeeDataWorkspace,
   GeneratedRecordLists,
 } from "./vertical-data-workspace";
+import { CredentialVault, ProjectBoard } from "./collaboration-workspaces";
 
 type Role = "admin" | "employee" | "client";
-type Page = "overview" | "analytics" | "admin-reports" | "admin-client-view" | "recruiting" | "orientation" | "training" | "time" | "amzn-adp";
+type Page = "overview" | "analytics" | "vault" | "tasks" | "admin-reports" | "admin-client-view" | "recruiting" | "orientation" | "training" | "time" | "amzn-adp";
 type Verdict = "pending" | "valid" | "invalid";
 type SignalTone = "success" | "warning" | "danger" | "neutral";
 type ResetScope = "reports" | "workspace";
@@ -138,6 +139,11 @@ const analyticsNavItem: { id: Page; short: string; label: string } = {
   label: "Analytics",
 };
 
+const sharedNavigationItems: { id: Page; short: string; label: string }[] = [
+  { id: "vault", short: "VA", label: "VINE Vault" },
+  { id: "tasks", short: "TK", label: "VINE Tasks" },
+];
+
 const timeAttendanceVerticalId = "00000000-0000-4000-8000-000000000104";
 
 function enabledVerticalIds(client: ClientOption | undefined) {
@@ -153,6 +159,7 @@ function clientNavigation(client: ClientOption | undefined) {
   });
   items.splice(1, 0, analyticsNavItem);
   if (allowed.has(timeAttendanceVerticalId)) items.push(amazonVsAdpNavItem);
+  items.push(...sharedNavigationItems);
   return items;
 }
 
@@ -160,6 +167,12 @@ const adminNavItems: { id: Page; short: string; label: string }[] = [
   { id: "overview", short: "SA", label: "Command center" },
   { id: "admin-reports", short: "AR", label: "All vertical reports" },
   { id: "admin-client-view", short: "CV", label: "Client view" },
+  ...sharedNavigationItems,
+];
+
+const employeeNavItems: { id: Page; short: string; label: string }[] = [
+  { id: "overview", short: "WS", label: "Vertical workspace" },
+  ...sharedNavigationItems,
 ];
 
 const reportConfig: Record<"recruiting" | "orientation" | "training", {
@@ -258,7 +271,7 @@ async function exportDashboardData(reports: PublishedReport[], clientName: strin
     ["Vertical", "Today", "Rolling 30 Days", "Status"],
     ...cards.map((item) => [item.title, item.today, item.month, item.status]),
   ];
-  const basename = `VINE-Pulse-${clientName.replace(/\s+/g, "-")}-30-day-report`;
+  const basename = `VINE-Pulse-${clientName.replace(/\s+/g, "-")}-90-day-report`;
 
   if (format === "csv") {
     const csv = rows.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\r\n");
@@ -280,7 +293,7 @@ async function exportDashboardData(reports: PublishedReport[], clientName: strin
     doc.text("VINE Pulse", 14, 18);
     doc.setFontSize(10);
     doc.setTextColor(0, 140, 99);
-    doc.text(`${clientName} | Rolling 30-day operations report`, 14, 25);
+    doc.text(`${clientName} | Rolling 90-day operations report`, 14, 25);
     autoTableModule.default(doc, { head: [rows[0]], body: rows.slice(1), startY: 32, theme: "striped", headStyles: { fillColor: [0, 140, 99] } });
     doc.save(`${basename}.pdf`);
     return;
@@ -649,7 +662,7 @@ export function OpsConsole() {
     const selectedClientId = selectedClient.id;
     let active = true;
     const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 29);
+    startDate.setDate(startDate.getDate() - 89);
     async function loadPublishedReports() {
       if (!supabase) return;
       const { data, error } = await supabase
@@ -680,10 +693,12 @@ export function OpsConsole() {
     if (role === "admin") {
       if (page === "admin-reports") return "All vertical reports";
       if (page === "admin-client-view") return "Client view";
+      if (page === "vault") return "VINE Vault";
+      if (page === "tasks") return "VINE Tasks";
       return "Super Admin command center";
     }
-    if (role === "employee") return "Employee workspace";
-    return page === "overview" ? "Operations overview" : [...navItems, analyticsNavItem, amazonVsAdpNavItem].find((item) => item.id === page)?.label ?? "Operations";
+    if (role === "employee") return employeeNavItems.find((item) => item.id === page)?.label ?? "Employee workspace";
+    return page === "overview" ? "Operations overview" : [...navItems, analyticsNavItem, amazonVsAdpNavItem, ...sharedNavigationItems].find((item) => item.id === page)?.label ?? "Operations";
   }, [page, role]);
   const availableClientReportDates = reportDates(publishedReports);
   const selectedClientReportDate = clientReportDate === null || (clientReportDate && !availableClientReportDates.includes(clientReportDate))
@@ -850,7 +865,7 @@ export function OpsConsole() {
 
         <div className="nav-label">{role === "admin" ? "Administration" : role === "employee" ? "Client preview" : "Client reports"}</div>
         <nav className="nav">
-          {(role === "admin" ? adminNavItems : role === "client" ? clientNavItems : navItems).map((item) => (
+          {(role === "admin" ? adminNavItems : role === "client" ? clientNavItems : employeeNavItems).map((item) => (
             <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => selectPage(item.id)}>
               <span className="nav-icon">{item.short}</span>
               <span className="nav-copy">{item.label}</span>
@@ -885,10 +900,14 @@ export function OpsConsole() {
 
         <div className="content">
           {role === "admin" ? (
-            page === "admin-reports" && profile ? (
+            page === "vault" && profile ? (
+              <CredentialVault clients={clients} role="admin" profile={profile} onMessage={setToast} />
+            ) : page === "tasks" && profile ? (
+              <ProjectBoard clients={clients} role="admin" profile={profile} onMessage={setToast} />
+            ) : page === "admin-reports" && profile ? (
               <AdminReportAccess clients={clients} profile={profile} onMessage={setToast} />
             ) : page === "admin-client-view" ? (
-              <AdminClientView clients={clients} onMessage={setToast} />
+              <AdminClientView clients={clients} profile={profile!} onMessage={setToast} />
             ) : (
               <AdminWorkspace
                 clients={clients}
@@ -900,14 +919,16 @@ export function OpsConsole() {
           ) : role === "employee" ? (
             employeeDsp ? (
               session && profile ? (
-                <EmployeeDataWorkspace
-                  client={employeeDsp}
-                  verticalId={profile.vertical_id ?? verticalOptions[0].id}
-                  verticalName={verticalOptions.find((item) => item.id === profile.vertical_id)?.name ?? verticalOptions[0].name}
-                  profile={profile}
-                  onMessage={setToast}
-                  onChangeDsp={() => setEmployeeDspId(null)}
-                />
+                page === "vault" ? <CredentialVault clients={clients} client={employeeDsp} role="employee" profile={profile} onMessage={setToast} />
+                  : page === "tasks" ? <ProjectBoard clients={clients} client={employeeDsp} role="employee" profile={profile} onMessage={setToast} />
+                    : <EmployeeDataWorkspace
+                      client={employeeDsp}
+                      verticalId={profile.vertical_id ?? verticalOptions[0].id}
+                      verticalName={verticalOptions.find((item) => item.id === profile.vertical_id)?.name ?? verticalOptions[0].name}
+                      profile={profile}
+                      onMessage={setToast}
+                      onChangeDsp={() => setEmployeeDspId(null)}
+                    />
               ) : null
             ) : (
               <DspLanding
@@ -918,23 +939,25 @@ export function OpsConsole() {
             )
           ) : (
             <div data-export-region>
-              <div className="page-heading">
+              {page !== "vault" && page !== "tasks" && <div className="page-heading">
                 <div>
                   <p className="eyebrow">{clientName} · Daily report</p>
                   <h1>{pageTitle}</h1>
                   <p>{page === "analytics"
-                    ? "Identity-matched conversion analytics across the latest 30 days of published reports."
+                    ? "Identity-matched conversion analytics across the latest 90 days of published reports."
                     : selectedClientReportDate
-                      ? `Showing the published report for ${displayDate(selectedClientReportDate)}, with the rolling 30-day comparison retained in the overview.`
-                      : "Showing all published reports in the rolling 30-day window."}</p>
+                      ? `Showing the published report for ${displayDate(selectedClientReportDate)}, with the rolling 90-day comparison retained in the overview.`
+                      : "Showing all published reports in the rolling 90-day window."}</p>
                 </div>
                 <div className="heading-actions">
                   {page !== "analytics" && <ReportDayControl reports={publishedReports} value={selectedClientReportDate} onChange={setClientReportDate} />}
                   <ExportControl onExport={exportDashboard} />
                 </div>
-              </div>
+              </div>}
               {page === "overview" && <Overview onOpen={selectPage} reports={visiblePublishedReports} historyReports={publishedReports} selectedDate={selectedClientReportDate} allowedVerticalIds={enabledVerticalIds(selectedClient)} />}
               {page === "analytics" && <AnalyticsDashboard reports={allowedPublishedReports} />}
+              {page === "vault" && profile && selectedClient && <CredentialVault clients={clients} client={selectedClient} role="client" profile={profile} onMessage={setToast} />}
+              {page === "tasks" && profile && selectedClient && <ProjectBoard clients={clients} client={selectedClient} role="client" profile={profile} onMessage={setToast} />}
               {(page === "recruiting" || page === "orientation" || page === "training") && <VerticalReport page={page} reports={visiblePublishedReports} journeyReports={allowedPublishedReports} onExport={exportDashboard} />}
               {page === "time" && <TimeAttendance reports={visiblePublishedReports} journeyReports={allowedPublishedReports} verdicts={verdicts} onVerdict={(id, verdict) => {
                 setVerdicts((current) => ({ ...current, [id]: verdict }));
@@ -1009,7 +1032,7 @@ function LoginBrandPanel() {
       <div className="login-proof">
         <span>Secure client separation</span>
         <span>Daily 5 PM ET deadline</span>
-        <span>30-day reporting</span>
+        <span>90-day reporting</span>
       </div>
     </section>
   );
@@ -1084,13 +1107,13 @@ function Overview({
       <div className="hero-grid">
         <section className="panel overview-panel">
           <div className="panel-head">
-            <div><h2>{selectedDate ? `${displayDate(selectedDate)} at a glance` : "30-day overview"}</h2><p>Summary totals across your active VINE Pulse services</p></div>
+            <div><h2>{selectedDate ? `${displayDate(selectedDate)} at a glance` : "90-day overview"}</h2><p>Summary totals across your active VINE Pulse services</p></div>
             <span className="pill">Live data only</span>
           </div>
           <div className="stats-grid">
             {cards.map((card) => <Stat key={card.id} index={card.num} label={card.title} value={String(card.today)} note={card.status} />)}
           </div>
-          {!reports.length && <EmptyState title="No operational data yet" copy="Your first published report will create the dashboard totals and rolling 30-day history." />}
+          {!reports.length && <EmptyState title="No operational data yet" copy="Your first published report will create the dashboard totals and rolling 90-day history." />}
         </section>
         <section className="panel activity-panel">
           <div className="panel-head"><div><h3>Latest updates</h3><p>Published by your VINE Pulse team</p></div><span className="pill">Live</span></div>
@@ -1105,7 +1128,7 @@ function Overview({
           <article className="vertical-card" key={vertical.id} onClick={() => onOpen(vertical.id)} tabIndex={0} onKeyDown={(event) => event.key === "Enter" && onOpen(vertical.id)}>
             <div className="vertical-number"><span>VERTICAL {vertical.num}</span><span className={`status-${vertical.tone}`}>{vertical.status}</span></div>
             <h3>{vertical.title}</h3>
-            <div className="vertical-metrics"><div><strong>{vertical.today}</strong><span>{selectedDate ? "selected day" : "latest day"}</span></div><div><strong>{vertical.month}</strong><span>30 days</span></div></div>
+            <div className="vertical-metrics"><div><strong>{vertical.today}</strong><span>{selectedDate ? "selected day" : "latest day"}</span></div><div><strong>{vertical.month}</strong><span>90 days</span></div></div>
           </article>
         ))}
       </section>
@@ -1169,7 +1192,7 @@ function VerticalReport({ page, reports, journeyReports, onExport }: { page: "re
         <GeneratedRecordLists verticalId={verticalOptions.find((item) => item.key === page)?.id ?? ""} rows={generatedRows} title="Client operational lists" />
       </section>
       <aside className="side-stack">
-        <section className="panel side-panel"><div className="panel-head"><div><h3>{matching.length <= 1 ? "Daily activity" : "30-day activity"}</h3><p>Published source reports</p></div></div>{matching.length ? <div className="metric-strip compact-metrics"><div className="metric-cell"><strong>{matching.length}</strong><span>reporting days</span></div><div className="metric-cell"><strong>{recordCount}</strong><span>records</span></div></div> : <EmptyState title="No progress data" copy="Progress rates will be calculated after reports are published." />}</section>
+        <section className="panel side-panel"><div className="panel-head"><div><h3>{matching.length <= 1 ? "Daily activity" : "90-day activity"}</h3><p>Published source reports</p></div></div>{matching.length ? <div className="metric-strip compact-metrics"><div className="metric-cell"><strong>{matching.length}</strong><span>reporting days</span></div><div className="metric-cell"><strong>{recordCount}</strong><span>records</span></div></div> : <EmptyState title="No progress data" copy="Progress rates will be calculated after reports are published." />}</section>
         <section className="panel side-panel"><div className="panel-head"><div><h3>Privacy rule</h3><p>Names are limited to your company</p></div></div><div className="note-box">The overview uses totals. Individual names appear only inside authorized operational detail screens. Raw DL and I-9 documents remain outside the dashboard.</div></section>
       </aside>
     </div>
@@ -1232,7 +1255,7 @@ function TimeAttendance({ reports, journeyReports, verdicts, onVerdict }: { repo
         </tbody></table></div>}
         <GeneratedRecordLists verticalId={verticalOptions[3].id} rows={generatedRows} title="Client attendance lists" />
       </section>
-      <aside className="side-stack"><section className="panel side-panel"><div className="panel-head"><div><h3>Compliance summary</h3><p>Last 30 days</p></div></div><EmptyState title="No compliance data" copy="Compliance rates will be calculated from published reports." /></section><section className="panel side-panel"><div className="panel-head"><div><h3>Decision requirement</h3></div></div><div className="note-box">Invalid and Needs More Information decisions require a client comment. VINE Pulse records the decision-maker and timestamp in the audit history.</div></section></aside>
+      <aside className="side-stack"><section className="panel side-panel"><div className="panel-head"><div><h3>Compliance summary</h3><p>Last 90 days</p></div></div><EmptyState title="No compliance data" copy="Compliance rates will be calculated from published reports." /></section><section className="panel side-panel"><div className="panel-head"><div><h3>Decision requirement</h3></div></div><div className="note-box">Invalid and Needs More Information decisions require a client comment. VINE Pulse records the decision-maker and timestamp in the audit history.</div></section></aside>
     </div>
   );
 }
@@ -1243,6 +1266,11 @@ function AnalyticsDashboard({ reports }: { reports: PublishedReport[] }) {
   const counts = new Map<JourneyStage, number>(
     funnelStages.map((stage) => [stage.id, journey.people.filter((person) => person.reached.has(stage.id)).length]),
   );
+  const latestSourcingReport = reportsForPage(reports, "recruiting")[0];
+  const liveInterviewMetric = latestSourcingReport?.report_metrics.find((metric) =>
+    metric.metric_key === "moved_to_in_person_interview" || /moved to in-person interview/i.test(metric.metric_label),
+  );
+  if (liveInterviewMetric) counts.set("live_interviewed", metricNumber(liveInterviewMetric));
   const countFor = (stage: JourneyStage) => counts.get(stage) ?? 0;
   const comparisons: { from: JourneyStage; to: JourneyStage; label: string }[] = [
     { from: "contacted", to: "live_interviewed", label: "Contacted → Live interviewed" },
@@ -1266,7 +1294,7 @@ function AnalyticsDashboard({ reports }: { reports: PublishedReport[] }) {
           <p className="eyebrow">Primary conversion</p>
           <h2>Live interviewed <span>→</span> For scheduling</h2>
           <p>The clearest end-to-end view of how live interviews become deployment-ready drivers.</p>
-          <div className="analytics-conversion-value"><strong>{mainConversion}%</strong><span>30-day conversion</span></div>
+          <div className="analytics-conversion-value"><strong>{mainConversion}%</strong><span>90-day conversion</span></div>
           <div className="analytics-hero-meta">
             <span><strong>{interviewed}</strong> live interviewed</span>
             <span><strong>{scheduled}</strong> for scheduling</span>
@@ -1292,16 +1320,19 @@ function AnalyticsDashboard({ reports }: { reports: PublishedReport[] }) {
 
       <div className="analytics-layout">
         <section className="panel analytics-funnel-panel">
-          <div className="panel-head"><div><p className="eyebrow">Pipeline progression</p><h3>Applicant-to-schedule funnel</h3><p>Unique people who reached each stage during the reporting window.</p></div><span className="pill">Identity matched</span></div>
+          <div className="panel-head"><div><p className="eyebrow">Pipeline progression</p><h3>Applicant-to-schedule funnel</h3><p>Published pipeline totals and identity-matched progress during the reporting window.</p></div><span className="pill">90-day view</span></div>
           <div className="analytics-funnel-bars">
             {funnelStages.map((stage, index) => {
               const value = countFor(stage.id);
               const contacted = countFor("contacted");
               const retention = contacted > 0 ? Math.round((value / contacted) * 100) : 0;
+              const source = stage.id === "live_interviewed" && liveInterviewMetric
+                ? "Moved to In-person Interview metric"
+                : `${retention}% of contacted applicants`;
               return (
                 <div className="analytics-funnel-row" key={stage.id}>
                   <span className="analytics-stage-number">{String(index + 1).padStart(2, "0")}</span>
-                  <div className="analytics-stage-copy"><strong>{stage.label}</strong><span>{retention}% of contacted applicants</span></div>
+                  <div className="analytics-stage-copy"><strong>{stage.label}</strong><span>{source}</span></div>
                   <div className="analytics-track"><span style={{ width: `${(value / stageMaximum) * 100}%` }} /></div>
                   <strong className="analytics-stage-value">{value}</strong>
                 </div>
@@ -1313,10 +1344,10 @@ function AnalyticsDashboard({ reports }: { reports: PublishedReport[] }) {
         <aside className="panel analytics-quality-panel">
           <p className="eyebrow">Data confidence</p>
           <h3>Persistent journey history</h3>
-          <p>People are connected across verticals by email first, phone second, and normalized name last. Original report rows are never removed.</p>
+          <p>Live interviewed now comes directly from the published “Moved to In-person Interview” total. Other journey stages connect people by email, phone, then normalized name.</p>
           <div className="analytics-confidence-list">
             <span><i /> Retains every vertical record</span>
-            <span><i /> Uses the latest published stage</span>
+            <span><i /> Uses the published interview metric</span>
             <span><i /> Respects each client&apos;s vertical access</span>
           </div>
         </aside>
@@ -1486,7 +1517,7 @@ function EmployeeWorkspace({ client, assignedVerticalId, upload, previewOpen, on
           <div className="panel-head"><div><h3>Employee resources</h3><p>Use the approved report for your vertical</p></div></div>
           <div className="template-callout"><strong>{template.summary}</strong><span>Mapped from the report supplied for this vertical.</span></div>
           <a className="resource-link" href={`/templates/verticals/${encodeURIComponent(template.filename)}`} download>Download your vertical template <span>→</span></a>
-          {[["Upload source", `This upload is locked to ${client.company_name}.`], ["Review extraction", "Confirm totals, names, stages, and exceptions."], ["Preview client view", "See the dashboard before it is visible."], ["Publish update", "Add today’s data to the rolling 30-day report."]].map(([title, copy], index) => <div className="step" key={title}><span className="step-number">0{index + 1}</span><div><strong>{title}</strong><p>{copy}</p></div></div>)}
+          {[["Upload source", `This upload is locked to ${client.company_name}.`], ["Review extraction", "Confirm totals, names, stages, and exceptions."], ["Preview client view", "See the dashboard before it is visible."], ["Publish update", "Add today’s data to the rolling 90-day report."]].map(([title, copy], index) => <div className="step" key={title}><span className="step-number">0{index + 1}</span><div><strong>{title}</strong><p>{copy}</p></div></div>)}
         </section>
       </div>
       {upload && previewOpen && <ExtractionPreview upload={upload} onClose={onClosePreview} onPublish={onPublish} />}
@@ -1553,7 +1584,7 @@ function ExtractionPreview({ upload, onClose, onPublish }: { upload: UploadPrevi
   );
 }
 
-function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMessage: (message: string) => void }) {
+function AdminClientView({ clients, profile, onMessage }: { clients: ClientOption[]; profile: PortalProfile; onMessage: (message: string) => void }) {
   const [clientId, setClientId] = useState("");
   const [clientPage, setClientPage] = useState<Page>("overview");
   const [reports, setReports] = useState<PublishedReport[]>([]);
@@ -1569,7 +1600,7 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
     const portalClient = supabase;
     let active = true;
     const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 29);
+    startDate.setDate(startDate.getDate() - 89);
 
     async function loadClientReports() {
       const { data, error } = await portalClient
@@ -1617,7 +1648,7 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
 
   const clientPageTitle = clientPage === "overview"
     ? "Operations overview"
-    : [...navItems, analyticsNavItem, amazonVsAdpNavItem].find((item) => item.id === clientPage)?.label ?? "Operations";
+    : [...navItems, analyticsNavItem, amazonVsAdpNavItem, ...sharedNavigationItems].find((item) => item.id === clientPage)?.label ?? "Operations";
 
   async function exportClientDashboard(format: ExportFormat) {
     try {
@@ -1634,7 +1665,7 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
         <div>
           <p className="eyebrow">Super Admin + client access</p>
           <h1>Client dashboard view</h1>
-          <p>Select any DSP to see the same published 30-day dashboard and vertical reports available to that client.</p>
+          <p>Select any DSP to see the same published 90-day dashboard and vertical reports available to that client.</p>
         </div>
         <span className="pill">Published client data</span>
       </div>
@@ -1656,7 +1687,7 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
         </label>
         <div className="admin-report-access-note">
           <strong>Viewing as {selectedClient.company_name}</strong>
-          <span>This preview only shows reports published to this DSP during the latest 30 days.</span>
+          <span>This preview only shows reports published to this DSP during the latest 90 days.</span>
         </div>
       </section>
 
@@ -1685,21 +1716,21 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
         </nav>
 
         <div className="admin-client-dashboard" data-export-region>
-          <div className="page-heading admin-client-heading">
+          {clientPage !== "vault" && clientPage !== "tasks" && <div className="page-heading admin-client-heading">
             <div>
               <p className="eyebrow">{selectedClient.company_name} · Daily report</p>
               <h1>{clientPageTitle}</h1>
               <p>{clientPage === "analytics"
-                ? "Identity-matched conversion analytics across the latest 30 days of published reports."
+                ? "Identity-matched conversion analytics across the latest 90 days of published reports."
                 : selectedReportDate
-                  ? `Showing the published report for ${displayDate(selectedReportDate)}, with the rolling 30-day comparison retained in the overview.`
-                  : "Showing all published reports in the rolling 30-day window."}</p>
+                  ? `Showing the published report for ${displayDate(selectedReportDate)}, with the rolling 90-day comparison retained in the overview.`
+                  : "Showing all published reports in the rolling 90-day window."}</p>
             </div>
             <div className="heading-actions">
               {clientPage !== "analytics" && <ReportDayControl reports={reports} value={selectedReportDate} onChange={setReportDate} />}
               <ExportControl onExport={exportClientDashboard} />
             </div>
-          </div>
+          </div>}
 
           {loading ? (
             <section className="panel admin-client-loading"><span className="pulse-loader" /><strong>Loading {selectedClient.company_name}&apos;s published reports…</strong></section>
@@ -1707,6 +1738,8 @@ function AdminClientView({ clients, onMessage }: { clients: ClientOption[]; onMe
             <>
               {clientPage === "overview" && <Overview onOpen={setClientPage} reports={visibleReports} historyReports={reports} selectedDate={selectedReportDate} allowedVerticalIds={enabledVerticalIds(selectedClient)} />}
               {clientPage === "analytics" && <AnalyticsDashboard reports={allowedReports} />}
+              {clientPage === "vault" && <CredentialVault clients={clients} client={selectedClient} role="client" profile={profile} onMessage={onMessage} />}
+              {clientPage === "tasks" && <ProjectBoard clients={clients} client={selectedClient} role="client" profile={profile} onMessage={onMessage} />}
               {(clientPage === "recruiting" || clientPage === "orientation" || clientPage === "training") && (
                 <VerticalReport page={clientPage} reports={visibleReports} journeyReports={allowedReports} onExport={exportClientDashboard} />
               )}
