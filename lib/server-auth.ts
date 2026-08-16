@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 
-export type ServerPortalRole = "super_admin" | "employee" | "client";
+export type ServerPortalRole = "super_admin" | "viewer_admin" | "employee" | "client";
 
 export function createServerAdmin() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
@@ -41,6 +41,7 @@ export async function canAccessClient(
   clientId: string,
 ) {
   if (role === "super_admin") return true;
+  if (role === "viewer_admin") return false;
   const table = role === "employee" ? "employee_client_assignments" : "client_memberships";
   const userColumn = role === "employee" ? "employee_id" : "user_id";
   const { data } = await admin.from(table).select("client_id").eq(userColumn, userId).eq("client_id", clientId).maybeSingle();
