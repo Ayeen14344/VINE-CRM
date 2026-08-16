@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 
+// These browser-safe values are embedded during the production build.
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -15,7 +16,7 @@ export const supabase = isSupabaseConfigured
     })
   : null;
 
-export type PortalRole = "super_admin" | "employee" | "client";
+export type PortalRole = "super_admin" | "viewer_admin" | "employee" | "client";
 
 export type PortalProfile = {
   id: string;
