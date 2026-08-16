@@ -20,7 +20,7 @@ import {
 } from "./vertical-data-workspace";
 import { CredentialVault, ProjectBoard } from "./collaboration-workspaces";
 
-type Role = "admin" | "employee" | "client";
+type Role = "admin" | "viewer" | "employee" | "client";
 type Page = "overview" | "analytics" | "vault" | "tasks" | "admin-reports" | "admin-client-view" | "recruiting" | "orientation" | "training" | "time" | "amzn-adp";
 type Verdict = "pending" | "valid" | "invalid";
 type SignalTone = "success" | "warning" | "danger" | "neutral";
@@ -45,7 +45,7 @@ type AdminUser = {
   name: string;
   email: string;
   role: string;
-  portalRole: "super_admin" | "employee" | "client";
+  portalRole: "super_admin" | "viewer_admin" | "employee" | "client";
   assignment: string;
   verticalId: string | null;
   clientIds: string[];
@@ -163,11 +163,22 @@ function clientNavigation(client: ClientOption | undefined) {
   return items;
 }
 
+const reportViewerNavItems: { id: Page; short: string; label: string }[] = [
+  { id: "overview", short: "OV", label: "Overview" },
+  analyticsNavItem,
+  ...navItems.filter((item) => item.id !== "overview"),
+  amazonVsAdpNavItem,
+];
+
 const adminNavItems: { id: Page; short: string; label: string }[] = [
   { id: "overview", short: "SA", label: "Command center" },
   { id: "admin-reports", short: "AR", label: "All vertical reports" },
   { id: "admin-client-view", short: "CV", label: "Client view" },
   ...sharedNavigationItems,
+];
+
+const viewerNavItems: { id: Page; short: string; label: string }[] = [
+  { id: "admin-client-view", short: "RV", label: "DSP report viewer" },
 ];
 
 const employeeNavItems: { id: Page; short: string; label: string }[] = [
@@ -203,6 +214,7 @@ function initials(name: string) {
 
 function roleFromProfile(profile: PortalProfile | null): Role {
   if (profile?.role === "super_admin") return "admin";
+  if (profile?.role === "viewer_admin") return "viewer";
   if (profile?.role === "employee") return "employee";
   return "client";
 }
@@ -617,6 +629,7 @@ export function OpsConsole() {
   void EmployeeWorkspace;
 
   const role = roleFromProfile(profile);
+  const activePage = role === "viewer" ? "admin-client-view" : page;
   const employeeDsp = clients.find((client) => client.id === employeeDspId);
   const selectedClient = role === "employee"
     ? employeeDsp
@@ -658,7 +671,7 @@ export function OpsConsole() {
   }, []);
 
   useEffect(() => {
-    if (!supabase || !session || !selectedClient?.id || role === "admin") {
+    if (!supabase || !session || !selectedClient?.id || role === "admin" || role === "viewer") {
       return;
     }
     const selectedClientId = selectedClient.id;
@@ -699,6 +712,7 @@ export function OpsConsole() {
       if (page === "tasks") return "VINE Tasks";
       return "Super Admin command center";
     }
+    if (role === "viewer") return "DSP report viewer";
     if (role === "employee") return employeeNavItems.find((item) => item.id === page)?.label ?? "Employee workspace";
     return page === "overview" ? "Operations overview" : [...navItems, analyticsNavItem, amazonVsAdpNavItem, ...sharedNavigationItems].find((item) => item.id === page)?.label ?? "Operations";
   }, [page, role]);
@@ -865,10 +879,10 @@ export function OpsConsole() {
           </div>
         </div>
 
-        <div className="nav-label">{role === "admin" ? "Administration" : role === "employee" ? "Client preview" : "Client reports"}</div>
+        <div className="nav-label">{role === "admin" ? "Administration" : role === "viewer" ? "Read-only administration" : role === "employee" ? "Client preview" : "Client reports"}</div>
         <nav className="nav">
-          {(role === "admin" ? adminNavItems : role === "client" ? clientNavItems : employeeNavItems).map((item) => (
-            <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => selectPage(item.id)}>
+          {(role === "admin" ? adminNavItems : role === "viewer" ? viewerNavItems : role === "client" ? clientNavItems : employeeNavItems).map((item) => (
+            <button key={item.id} className={activePage === item.id ? "active" : ""} onClick={() => selectPage(item.id)}>
               <span className="nav-icon">{item.short}</span>
               <span className="nav-copy">{item.label}</span>
             </button>
@@ -885,10 +899,10 @@ export function OpsConsole() {
         <header className="topbar">
           <button className="icon-btn mobile-menu" onClick={() => setMobileOpen((open) => !open)} aria-label="Open navigation">☰</button>
           <div className="client-select">
-            <div className="client-avatar">{role === "admin" ? "SA" : initials(clientName)}</div>
+            <div className="client-avatar">{role === "admin" ? "SA" : role === "viewer" ? "AV" : initials(clientName)}</div>
             <div>
-              <strong>{role === "admin" ? "All DSPs" : clientName}</strong>
-              <span>{role === "employee" && employeeDsp ? "Active DSP workspace" : "Secure production workspace"}</span>
+              <strong>{role === "admin" || role === "viewer" ? "All DSPs" : clientName}</strong>
+              <span>{role === "viewer" ? "Read-only report access" : role === "employee" && employeeDsp ? "Active DSP workspace" : "Secure production workspace"}</span>
             </div>
             {role === "employee" && employeeDsp && <button className="link-btn topbar-change-dsp" onClick={() => setEmployeeDspId(null)}>Change DSP</button>}
           </div>
@@ -918,6 +932,8 @@ export function OpsConsole() {
                 onMessage={setToast}
               />
             )
+          ) : role === "viewer" ? (
+            profile ? <AdminClientView clients={clients} profile={profile} onMessage={setToast} readOnly /> : null
           ) : role === "employee" ? (
             employeeDsp ? (
               session && profile ? (
@@ -1201,7 +1217,7 @@ function VerticalReport({ page, reports, journeyReports, onExport }: { page: "re
   );
 }
 
-function TimeAttendance({ reports, journeyReports, verdicts, onVerdict }: { reports: PublishedReport[]; journeyReports: PublishedReport[]; verdicts: Record<string, Verdict>; onVerdict: (id: string, verdict: Verdict) => void }) {
+function TimeAttendance({ reports, journeyReports, verdicts, onVerdict }: { reports: PublishedReport[]; journeyReports: PublishedReport[]; verdicts: Record<string, Verdict>; onVerdict?: (id: string, verdict: Verdict) => void }) {
   const [detailsVisible, setDetailsVisible] = useState(false);
   const journey = useMemo(() => buildApplicantJourney(journeyReports), [journeyReports]);
   const matching = reportsForPage(reports, "time");
@@ -1225,7 +1241,7 @@ function TimeAttendance({ reports, journeyReports, verdicts, onVerdict }: { repo
             {detailsVisible ? "Hide detailed records" : "Show detailed records"}
           </button>
         </div>
-        {detailsVisible && <div className="table-wrap"><table className="data-table attendance-detail-table"><thead><tr><th>Station</th><th>Employee</th><th>Latest journey stage</th><th>Phone Number</th><th>Cortex App In</th><th>Cortex App Out</th><th>ADP Clock In</th><th>ADP Clock Out</th><th>Total Break Time Used</th><th>Comments</th><th>Sign In Difference</th><th>Sign Out Difference</th><th>Missed Punch In</th><th>Missed Punch Out</th><th>Follow up for Missed Punch In</th><th>Punch In Status</th><th>Follow up for Missed Punch Out</th><th>Punch Out Status</th><th>Possible Time Theft</th><th>Sent To Dispatch</th><th>Report Date</th><th>Client Decision</th></tr></thead><tbody>
+        {detailsVisible && <div className="table-wrap"><table className="data-table attendance-detail-table"><thead><tr><th>Station</th><th>Employee</th><th>Latest journey stage</th><th>Phone Number</th><th>Cortex App In</th><th>Cortex App Out</th><th>ADP Clock In</th><th>ADP Clock Out</th><th>Total Break Time Used</th><th>Comments</th><th>Sign In Difference</th><th>Sign Out Difference</th><th>Missed Punch In</th><th>Missed Punch Out</th><th>Follow up for Missed Punch In</th><th>Punch In Status</th><th>Follow up for Missed Punch Out</th><th>Punch Out Status</th><th>Possible Time Theft</th><th>Sent To Dispatch</th><th>Report Date</th>{onVerdict && <th>Client Decision</th>}</tr></thead><tbody>
           {rows.map(({ report, row }) => {
             const verdict = verdicts[row.id] ?? "pending";
             return <tr className={`report-row report-row-${verdict === "invalid" ? "danger" : verdict === "valid" ? "success" : rowTone(row.data)}`} key={row.id}>
@@ -1250,10 +1266,10 @@ function TimeAttendance({ reports, journeyReports, verdicts, onVerdict }: { repo
               <td><DetailValue value={row.data.possible_time_theft} status /></td>
               <td><DetailValue value={row.data.sent_to_dispatch} status /></td>
               <td>{displayDate(report.report_date)}</td>
-              <td><div className="validation-btns"><button className={`valid-btn ${verdict === "valid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "valid")}>Valid</button><button className={`invalid-btn ${verdict === "invalid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "invalid")}>Invalid</button></div></td>
+              {onVerdict && <td><div className="validation-btns"><button className={`valid-btn ${verdict === "valid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "valid")}>Valid</button><button className={`invalid-btn ${verdict === "invalid" ? "selected" : ""}`} onClick={() => onVerdict(row.id, "invalid")}>Invalid</button></div></td>}
             </tr>;
           })}
-          {!rows.length && <tr><td colSpan={22}><EmptyState title="No time and attendance exceptions" copy="Uploaded and published exceptions will appear here for client review." /></td></tr>}
+          {!rows.length && <tr><td colSpan={onVerdict ? 22 : 21}><EmptyState title="No time and attendance exceptions" copy="Uploaded and published exceptions will appear here for client review." /></td></tr>}
         </tbody></table></div>}
         <GeneratedRecordLists verticalId={verticalOptions[3].id} rows={generatedRows} title="Client attendance lists" />
       </section>
@@ -1620,7 +1636,7 @@ function ExtractionPreview({ upload, onClose, onPublish }: { upload: UploadPrevi
   );
 }
 
-function AdminClientView({ clients, profile, onMessage }: { clients: ClientOption[]; profile: PortalProfile; onMessage: (message: string) => void }) {
+function AdminClientView({ clients, profile, onMessage, readOnly = false }: { clients: ClientOption[]; profile: PortalProfile; onMessage: (message: string) => void; readOnly?: boolean }) {
   const [clientId, setClientId] = useState("");
   const [clientPage, setClientPage] = useState<Page>("overview");
   const [reports, setReports] = useState<PublishedReport[]>([]);
@@ -1628,7 +1644,10 @@ function AdminClientView({ clients, profile, onMessage }: { clients: ClientOptio
   const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({});
   const [loading, setLoading] = useState(true);
   const selectedClient = clients.find((client) => client.id === clientId) ?? clients[0];
-  const selectedClientNavItems = useMemo(() => clientNavigation(selectedClient), [selectedClient]);
+  const selectedClientNavItems = useMemo(
+    () => readOnly ? reportViewerNavItems : clientNavigation(selectedClient),
+    [readOnly, selectedClient],
+  );
 
   useEffect(() => {
     if (!supabase || !selectedClient?.id) return;
@@ -1670,14 +1689,19 @@ function AdminClientView({ clients, profile, onMessage }: { clients: ClientOptio
     ? availableReportDates[0] ?? ""
     : reportDate;
   const visibleReports = reportsForDate(reports, selectedReportDate);
-  const allowedReports = reports.filter((report) => enabledVerticalIds(selectedClient).includes(report.vertical_id));
+  const allowedReports = readOnly
+    ? reports
+    : reports.filter((report) => enabledVerticalIds(selectedClient).includes(report.vertical_id));
+  const visibleVerticalIds = readOnly
+    ? verticalOptions.map((vertical) => vertical.id)
+    : enabledVerticalIds(selectedClient);
 
   if (!selectedClient) {
     return (
       <section className="panel admin-report-empty">
-        <p className="eyebrow">Super Admin + client access</p>
+        <p className="eyebrow">{readOnly ? "Admin viewer access" : "Super Admin + client access"}</p>
         <h1>Add a DSP before opening the client view</h1>
-        <p>Create your first client in the Command center, then return here to see its published dashboard.</p>
+        <p>{readOnly ? "A Super Admin must create a DSP before its published reports can be viewed." : "Create your first client in the Command center, then return here to see its published dashboard."}</p>
       </section>
     );
   }
@@ -1699,11 +1723,11 @@ function AdminClientView({ clients, profile, onMessage }: { clients: ClientOptio
     <>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">Super Admin + client access</p>
-          <h1>Client dashboard view</h1>
-          <p>Select any DSP to see the same published 90-day dashboard and vertical reports available to that client.</p>
+          <p className="eyebrow">{readOnly ? "All-DSP report access" : "Super Admin + client access"}</p>
+          <h1>{readOnly ? "Read-only DSP report viewer" : "Client dashboard view"}</h1>
+          <p>{readOnly ? "Select any DSP to view and download its published reports across every vertical. Editing, uploading, and administration are disabled." : "Select any DSP to see the same published 90-day dashboard and vertical reports available to that client."}</p>
         </div>
-        <span className="pill">Published client data</span>
+        <span className="pill">{readOnly ? "View and download only" : "Published client data"}</span>
       </div>
       <section className="panel admin-report-selector admin-client-selector">
         <label>
@@ -1736,7 +1760,7 @@ function AdminClientView({ clients, profile, onMessage }: { clients: ClientOptio
               <strong>{selectedClient.company_name}</strong>
             </div>
           </div>
-          <span className="pill">Super Admin viewing as client</span>
+          <span className="pill">{readOnly ? "Admin viewer · read only" : "Super Admin viewing as client"}</span>
         </div>
         <nav className="admin-client-nav" aria-label={`${selectedClient.company_name} client report navigation`}>
           {selectedClientNavItems.map((item) => (
@@ -1772,10 +1796,10 @@ function AdminClientView({ clients, profile, onMessage }: { clients: ClientOptio
             <section className="panel admin-client-loading"><span className="pulse-loader" /><strong>Loading {selectedClient.company_name}&apos;s published reports…</strong></section>
           ) : (
             <>
-              {clientPage === "overview" && <Overview onOpen={setClientPage} reports={visibleReports} historyReports={reports} selectedDate={selectedReportDate} allowedVerticalIds={enabledVerticalIds(selectedClient)} />}
+              {clientPage === "overview" && <Overview onOpen={setClientPage} reports={visibleReports} historyReports={reports} selectedDate={selectedReportDate} allowedVerticalIds={visibleVerticalIds} />}
               {clientPage === "analytics" && <AnalyticsDashboard reports={allowedReports} />}
-              {clientPage === "vault" && <CredentialVault clients={clients} client={selectedClient} role="client" profile={profile} onMessage={onMessage} />}
-              {clientPage === "tasks" && <ProjectBoard clients={clients} client={selectedClient} role="client" profile={profile} onMessage={onMessage} />}
+              {!readOnly && clientPage === "vault" && <CredentialVault clients={clients} client={selectedClient} role="client" profile={profile} onMessage={onMessage} />}
+              {!readOnly && clientPage === "tasks" && <ProjectBoard clients={clients} client={selectedClient} role="client" profile={profile} onMessage={onMessage} />}
               {(clientPage === "recruiting" || clientPage === "orientation" || clientPage === "training") && (
                 <VerticalReport page={clientPage} reports={visibleReports} journeyReports={allowedReports} onExport={exportClientDashboard} />
               )}
@@ -1784,7 +1808,7 @@ function AdminClientView({ clients, profile, onMessage }: { clients: ClientOptio
                   reports={visibleReports}
                   journeyReports={allowedReports}
                   verdicts={verdicts}
-                  onVerdict={(id, verdict) => {
+                  onVerdict={readOnly ? undefined : (id, verdict) => {
                     setVerdicts((current) => ({ ...current, [id]: verdict }));
                     onMessage(`Time-theft item marked ${verdict} in the client preview.`);
                   }}
@@ -1921,13 +1945,15 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
             id: user.id,
             name: user.full_name || user.email,
             email: user.email,
-            role: user.role === "super_admin" ? "Super Admin" : user.role === "employee" ? "Employee" : "Client",
+            role: user.role === "super_admin" ? "Super Admin" : user.role === "viewer_admin" ? "Admin Viewer" : user.role === "employee" ? "Employee" : "Client",
             portalRole: user.role as AdminUser["portalRole"],
             assignment: user.role === "super_admin"
               ? "All access"
-              : user.role === "employee"
-                ? `${vertical?.name ?? "Vertical pending"} · ${clientIds.length} DSP${clientIds.length === 1 ? "" : "s"}`
-                : client?.company_name ?? "DSP pending",
+              : user.role === "viewer_admin"
+                ? "All DSPs · view and download only"
+                : user.role === "employee"
+                  ? `${vertical?.name ?? "Vertical pending"} · ${clientIds.length} DSP${clientIds.length === 1 ? "" : "s"}`
+                  : client?.company_name ?? "DSP pending",
             verticalId: user.vertical_id,
             clientIds,
           };
@@ -2009,7 +2035,7 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
         clientId: userForm.role === "client" ? selectedClientId : null,
         verticalId: userForm.role === "employee" ? userForm.verticalId : null,
         clientIds: userForm.role === "employee" ? userForm.clientIds : [],
-        role: userForm.role === "admin" ? "super_admin" : userForm.role,
+        role: userForm.role === "admin" ? "super_admin" : userForm.role === "viewer" ? "viewer_admin" : userForm.role,
       }),
     });
     const result = await response.json() as { error?: string; user?: { id: string } };
@@ -2020,9 +2046,9 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
       id: result.user?.id ?? "",
       name: userForm.fullName,
       email: userForm.email,
-      role: userForm.role === "admin" ? "Super Admin" : userForm.role === "employee" ? "Employee" : "Client",
-      portalRole: userForm.role === "admin" ? "super_admin" : userForm.role as "employee" | "client",
-      assignment: userForm.role === "employee" ? `${vertical?.name} · ${userForm.clientIds.length} DSP${userForm.clientIds.length === 1 ? "" : "s"}` : userForm.role === "client" ? client?.company_name ?? "Client" : "All access",
+      role: userForm.role === "admin" ? "Super Admin" : userForm.role === "viewer" ? "Admin Viewer" : userForm.role === "employee" ? "Employee" : "Client",
+      portalRole: userForm.role === "admin" ? "super_admin" : userForm.role === "viewer" ? "viewer_admin" : userForm.role as "employee" | "client",
+      assignment: userForm.role === "employee" ? `${vertical?.name} · ${userForm.clientIds.length} DSP${userForm.clientIds.length === 1 ? "" : "s"}` : userForm.role === "client" ? client?.company_name ?? "Client" : userForm.role === "viewer" ? "All DSPs · view and download only" : "All access",
       verticalId: userForm.role === "employee" ? userForm.verticalId : null,
       clientIds: userForm.role === "employee" ? [...userForm.clientIds] : [],
     }]);
@@ -2220,10 +2246,10 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
 
   return (
     <>
-      <div className="page-heading"><div><p className="eyebrow">System-wide visibility</p><h1>Super Admin command center</h1><p>Create DSP workspaces, issue employee and client accounts, and assign one vertical per employee across selected DSPs.</p></div><span className="pill">5 PM ET daily deadline</span></div>
+      <div className="page-heading"><div><p className="eyebrow">System-wide visibility</p><h1>Super Admin command center</h1><p>Create DSP workspaces, issue employee, client, and read-only admin accounts, and assign one vertical per employee across selected DSPs.</p></div><span className="pill">5 PM ET daily deadline</span></div>
       <div className="admin-stat-grid">
         <Stat index="01" label="Active DSPs" value={String(clients.length)} note="Manually managed workspaces" />
-        <Stat index="02" label="Portal users" value={String(users.length)} note="Admins, employees, and clients" />
+        <Stat index="02" label="Portal users" value={String(users.length)} note="Admins, viewers, employees, and clients" />
         <Stat index="03" label="Verticals configured" value="4" note="Production report structures" />
         <Stat index="04" label="Reports received" value={String(reportsCount)} note={reportsCount ? "Stored report versions" : "No client reports uploaded yet"} />
       </div>
@@ -2241,7 +2267,8 @@ function AdminWorkspace({ clients, session, onClientsChange, onMessage }: { clie
           <div className="panel-head"><div><h2>Add user</h2><p>Email/password access with role-based permissions</p></div></div>
           <form className="admin-form" onSubmit={addUser}>
             <div className="form-row"><label>Full name<input required value={userForm.fullName} onChange={(event) => setUserForm({ ...userForm, fullName: event.target.value })} /></label><label>Email<input required type="email" value={userForm.email} onChange={(event) => setUserForm({ ...userForm, email: event.target.value })} /></label></div>
-            <div className="form-row"><label>Temporary password<input required minLength={10} type="password" value={userForm.password} onChange={(event) => setUserForm({ ...userForm, password: event.target.value })} placeholder="Minimum 10 characters" /></label><label>Role<select value={userForm.role} onChange={(event) => setUserForm({ ...userForm, role: event.target.value })}><option value="employee">Employee</option><option value="client">Client</option><option value="admin">Super Admin</option></select></label></div>
+            <div className="form-row"><label>Temporary password<input required minLength={10} type="password" value={userForm.password} onChange={(event) => setUserForm({ ...userForm, password: event.target.value })} placeholder="Minimum 10 characters" /></label><label>Role<select value={userForm.role} onChange={(event) => setUserForm({ ...userForm, role: event.target.value })}><option value="employee">Employee</option><option value="client">Client</option><option value="viewer">Admin Viewer</option><option value="admin">Super Admin</option></select></label></div>
+            {userForm.role === "viewer" && <div className="note-box">Admin Viewers can open every DSP, view every vertical, and download published reports. They cannot upload, edit, publish, manage users or clients, access VINE Vault, or change tasks.</div>}
             {userForm.role === "employee" && <label>Employee vertical<select value={userForm.verticalId} onChange={(event) => setUserForm({ ...userForm, verticalId: event.target.value })}>{verticalOptions.map((vertical) => <option key={vertical.id} value={vertical.id}>{vertical.name}</option>)}</select><small>The employee will be assigned this one vertical across all selected DSPs.</small></label>}
             {userForm.role === "employee" && <fieldset className="dsp-assignment-fieldset"><legend>Assigned DSPs</legend><div className="dsp-assignment-list">{clients.map((client) => <label key={client.id}><input type="checkbox" checked={userForm.clientIds.includes(client.id)} onChange={(event) => setUserForm({ ...userForm, clientIds: event.target.checked ? [...userForm.clientIds, client.id] : userForm.clientIds.filter((id) => id !== client.id) })} /><span>{client.company_name}</span></label>)}</div><small>Only selected DSPs will appear on the employee landing page.</small></fieldset>}
             {userForm.role === "client" && <label>Client company<select value={selectedClientId} onChange={(event) => setUserForm({ ...userForm, clientId: event.target.value })}>{clients.map((client) => <option key={client.id} value={client.id}>{client.company_name}</option>)}</select></label>}
