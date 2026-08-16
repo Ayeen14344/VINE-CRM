@@ -4,7 +4,7 @@ type CreateUserPayload = {
   email?: string;
   password?: string;
   fullName?: string;
-  role?: "super_admin" | "employee" | "client";
+  role?: "super_admin" | "viewer_admin" | "employee" | "client";
   clientId?: string | null;
   verticalId?: string | null;
   clientIds?: string[];
