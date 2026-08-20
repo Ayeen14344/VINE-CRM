@@ -331,6 +331,33 @@ function displayDate(value: string | null | undefined) {
     : parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+function normalizedCalendarDate(value: unknown) {
+  if (typeof value === "number" && value > 0) {
+    const excelEpoch = Date.UTC(1899, 11, 30);
+    const parsed = new Date(excelEpoch + Math.round(value) * 86_400_000);
+    return Number.isNaN(parsed.valueOf()) ? "" : parsed.toISOString().slice(0, 10);
+  }
+
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+
+  const isoDate = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoDate) return `${isoDate[1]}-${isoDate[2]}-${isoDate[3]}`;
+
+  const usDate = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (usDate) {
+    return `${usDate[3]}-${usDate[1].padStart(2, "0")}-${usDate[2].padStart(2, "0")}`;
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.valueOf())) return "";
+  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+}
+
+function isConfirmedInterview(value: unknown) {
+  return /^(yes|y|true|1|confirmed)$/.test(String(value ?? "").trim().toLowerCase());
+}
+
 function hasDisplayValue(value: SavedRow["data"][string]) {
   return value !== null && value !== undefined && String(value).trim() !== "";
 }
@@ -1327,6 +1354,35 @@ function AnalyticsDashboard({ reports }: { reports: PublishedReport[] }) {
   const reportDayCount = new Set(rangeReports.map((report) => report.report_date)).size;
   const hasAnalytics = funnelStages.some((stage) => countFor(stage.id) > 0);
   const stageLabel = (id: JourneyStage) => journeyStages.find((stage) => stage.id === id)?.shortLabel ?? id;
+  const dailyInterviews = useMemo(() => {
+    const interviewsByDate = new Map<string, Map<string, boolean>>();
+
+    reportsForPage(rangeReports, "recruiting").forEach((report) => {
+      mergeReportRows(report.report_rows).forEach((row) => {
+        const interviewDate = normalizedCalendarDate(row.data.scheduled_interview);
+        if (!interviewDate) return;
+
+        const applicantId = personAliases(row)[0] ?? `row:${row.id}`;
+        const applicants = interviewsByDate.get(interviewDate) ?? new Map<string, boolean>();
+        applicants.set(applicantId, (applicants.get(applicantId) ?? false) || isConfirmedInterview(row.data.interview_confirmed));
+        interviewsByDate.set(interviewDate, applicants);
+      });
+    });
+
+    return Array.from(interviewsByDate.entries())
+      .map(([date, applicants]) => ({
+        date,
+        scheduled: applicants.size,
+        confirmed: Array.from(applicants.values()).filter(Boolean).length,
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }, [rangeReports]);
+  const dailyInterviewMaximum = Math.max(...dailyInterviews.map((day) => day.scheduled), 1);
+  const scheduledInterviewTotal = dailyInterviews.reduce((total, day) => total + day.scheduled, 0);
+  const confirmedInterviewTotal = dailyInterviews.reduce((total, day) => total + day.confirmed, 0);
+  const dailyConfirmationRate = scheduledInterviewTotal > 0
+    ? Math.round((confirmedInterviewTotal / scheduledInterviewTotal) * 100)
+    : 0;
 
   return (
     <div className="analytics-dashboard">
@@ -1365,6 +1421,51 @@ function AnalyticsDashboard({ reports }: { reports: PublishedReport[] }) {
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="panel analytics-daily-panel">
+        <div className="panel-head analytics-daily-head">
+          <div>
+            <p className="eyebrow">Daily interview report</p>
+            <h2>Scheduled and confirmed interviews by day</h2>
+            <p>Unique applicants from Sourcing &amp; Hiring, grouped by the Scheduled Interview date in the selected reporting window.</p>
+          </div>
+          <div className="analytics-daily-legend" aria-label="Chart legend">
+            <span><i className="scheduled" /> Scheduled interviews</span>
+            <span><i className="confirmed" /> Confirmed</span>
+          </div>
+        </div>
+
+        <div className="analytics-daily-summary">
+          <article><span>Scheduled interviews</span><strong>{scheduledInterviewTotal}</strong></article>
+          <article><span>Confirmed</span><strong>{confirmedInterviewTotal}</strong></article>
+          <article><span>Confirmation rate</span><strong>{dailyConfirmationRate}%</strong></article>
+          <article><span>Interview days</span><strong>{dailyInterviews.length}</strong></article>
+        </div>
+
+        {dailyInterviews.length ? (
+          <div className="analytics-daily-chart" role="img" aria-label={`${scheduledInterviewTotal} scheduled interviews and ${confirmedInterviewTotal} confirmed interviews by day`}>
+            {dailyInterviews.map((day) => (
+              <div className="analytics-daily-row" key={day.date}>
+                <div className="analytics-daily-date"><strong>{displayDate(day.date)}</strong><span>{day.confirmed} of {day.scheduled} confirmed</span></div>
+                <div className="analytics-daily-bars">
+                  <div className="analytics-daily-bar-line">
+                    <span>Scheduled</span>
+                    <div className="analytics-daily-track"><i className="scheduled" style={{ width: `${(day.scheduled / dailyInterviewMaximum) * 100}%` }} /></div>
+                    <strong>{day.scheduled}</strong>
+                  </div>
+                  <div className="analytics-daily-bar-line">
+                    <span>Confirmed</span>
+                    <div className="analytics-daily-track"><i className="confirmed" style={{ width: `${(day.confirmed / dailyInterviewMaximum) * 100}%` }} /></div>
+                    <strong>{day.confirmed}</strong>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState title="No scheduled interview dates in this range" copy="Add a date to the Scheduled Interview column in a published Sourcing & Hiring report to populate this daily view." />
+        )}
       </section>
 
       {!hasAnalytics && <section className="panel"><EmptyState title="No analytics data in this range" copy="Choose a wider date range or publish Sourcing, Orientation, or Training reports to populate the funnel." /></section>}
