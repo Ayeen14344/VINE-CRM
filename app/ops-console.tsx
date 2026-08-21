@@ -92,6 +92,13 @@ type JourneyPerson = {
   latestDate: string;
 };
 type JourneyIndex = { people: JourneyPerson[]; byAlias: Map<string, JourneyPerson> };
+type CalendarPerson = { id: string; name: string; detail: string; confirmed?: boolean };
+type CalendarActivityDay = {
+  date: string;
+  interviews: CalendarPerson[];
+  orientations: CalendarPerson[];
+  training: CalendarPerson[];
+};
 
 const verticalTemplateMeta: Record<string, { filename: string; summary: string }> = {
   "00000000-0000-4000-8000-000000000101": {
@@ -356,6 +363,46 @@ function normalizedCalendarDate(value: unknown) {
 
 function isConfirmedInterview(value: unknown) {
   return /^(yes|y|true|1|confirmed)$/.test(String(value ?? "").trim().toLowerCase());
+}
+
+function calendarMonthLabel(month: string) {
+  const match = month.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return "Calendar";
+  return new Date(Number(match[1]), Number(match[2]) - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+
+function shiftCalendarMonth(month: string, offset: number) {
+  const match = month.match(/^(\d{4})-(\d{2})$/);
+  const base = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1 + offset, 1)
+    : new Date();
+  return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function calendarMonthDates(month: string) {
+  const match = month.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return [] as (string | null)[];
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  const leadingDays = new Date(year, monthIndex, 1).getDay();
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const cellCount = Math.ceil((leadingDays + daysInMonth) / 7) * 7;
+  return Array.from({ length: cellCount }, (_, index) => {
+    const day = index - leadingDays + 1;
+    return day >= 1 && day <= daysInMonth
+      ? `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+      : null;
+  });
+}
+
+function calendarPerson(row: SavedRow): CalendarPerson {
+  const name = String(row.person_name ?? row.data.name ?? row.data.candidate_name ?? row.data.driver_name ?? "Unnamed driver").trim();
+  const detail = String(row.data.email ?? row.data.email_address ?? row.data.phone_number ?? row.data.number ?? "No contact information").trim();
+  return {
+    id: personAliases(row)[0] ?? `row:${row.id}`,
+    name: name || "Unnamed driver",
+    detail: detail || "No contact information",
+  };
 }
 
 function hasDisplayValue(value: SavedRow["data"][string]) {
@@ -1354,35 +1401,69 @@ function AnalyticsDashboard({ reports }: { reports: PublishedReport[] }) {
   const reportDayCount = new Set(rangeReports.map((report) => report.report_date)).size;
   const hasAnalytics = funnelStages.some((stage) => countFor(stage.id) > 0);
   const stageLabel = (id: JourneyStage) => journeyStages.find((stage) => stage.id === id)?.shortLabel ?? id;
-  const dailyInterviews = useMemo(() => {
-    const interviewsByDate = new Map<string, Map<string, boolean>>();
+  const calendarActivity = useMemo(() => {
+    type DraftDay = {
+      date: string;
+      interviews: Map<string, CalendarPerson>;
+      orientations: Map<string, CalendarPerson>;
+      training: Map<string, CalendarPerson>;
+    };
+    const days = new Map<string, DraftDay>();
+    const dayFor = (date: string) => {
+      const existing = days.get(date);
+      if (existing) return existing;
+      const day: DraftDay = { date, interviews: new Map(), orientations: new Map(), training: new Map() };
+      days.set(date, day);
+      return day;
+    };
 
     reportsForPage(rangeReports, "recruiting").forEach((report) => {
       mergeReportRows(report.report_rows).forEach((row) => {
-        const interviewDate = normalizedCalendarDate(row.data.scheduled_interview);
-        if (!interviewDate) return;
-
-        const applicantId = personAliases(row)[0] ?? `row:${row.id}`;
-        const applicants = interviewsByDate.get(interviewDate) ?? new Map<string, boolean>();
-        applicants.set(applicantId, (applicants.get(applicantId) ?? false) || isConfirmedInterview(row.data.interview_confirmed));
-        interviewsByDate.set(interviewDate, applicants);
+        const date = normalizedCalendarDate(row.data.scheduled_interview);
+        if (!date) return;
+        const person = calendarPerson(row);
+        const day = dayFor(date);
+        const current = day.interviews.get(person.id);
+        day.interviews.set(person.id, {
+          ...person,
+          confirmed: Boolean(current?.confirmed) || isConfirmedInterview(row.data.interview_confirmed),
+        });
       });
     });
 
-    return Array.from(interviewsByDate.entries())
-      .map(([date, applicants]) => ({
-        date,
-        scheduled: applicants.size,
-        confirmed: Array.from(applicants.values()).filter(Boolean).length,
+    reportsForPage(rangeReports, "orientation").forEach((report) => {
+      mergeReportRows(report.report_rows).forEach((row) => {
+        const person = calendarPerson(row);
+        const orientationDate = normalizedCalendarDate(row.data.orientation_completed);
+        const trainingDate = normalizedCalendarDate(row.data.day_1_training_schedule);
+        if (orientationDate) dayFor(orientationDate).orientations.set(person.id, person);
+        if (trainingDate) dayFor(trainingDate).training.set(person.id, person);
+      });
+    });
+
+    return Array.from(days.values())
+      .map<CalendarActivityDay>((day) => ({
+        date: day.date,
+        interviews: Array.from(day.interviews.values()).sort((a, b) => a.name.localeCompare(b.name)),
+        orientations: Array.from(day.orientations.values()).sort((a, b) => a.name.localeCompare(b.name)),
+        training: Array.from(day.training.values()).sort((a, b) => a.name.localeCompare(b.name)),
       }))
       .sort((a, b) => a.date.localeCompare(b.date));
   }, [rangeReports]);
-  const dailyInterviewMaximum = Math.max(...dailyInterviews.map((day) => day.scheduled), 1);
-  const scheduledInterviewTotal = dailyInterviews.reduce((total, day) => total + day.scheduled, 0);
-  const confirmedInterviewTotal = dailyInterviews.reduce((total, day) => total + day.confirmed, 0);
-  const dailyConfirmationRate = scheduledInterviewTotal > 0
-    ? Math.round((confirmedInterviewTotal / scheduledInterviewTotal) * 100)
-    : 0;
+  const activityByDate = useMemo(() => new Map(calendarActivity.map((day) => [day.date, day])), [calendarActivity]);
+  const latestActivityDate = calendarActivity[calendarActivity.length - 1]?.date ?? latestDate;
+  const [selectedActivityDate, setSelectedActivityDate] = useState("");
+  const [selectedCalendarMonth, setSelectedCalendarMonth] = useState("");
+  const activeActivityDate = selectedActivityDate || latestActivityDate;
+  const visibleCalendarMonth = selectedCalendarMonth || activeActivityDate.slice(0, 7) || new Date().toISOString().slice(0, 7);
+  const calendarDates = useMemo(() => calendarMonthDates(visibleCalendarMonth), [visibleCalendarMonth]);
+  const selectedActivity = activityByDate.get(activeActivityDate) ?? {
+    date: activeActivityDate,
+    interviews: [],
+    orientations: [],
+    training: [],
+  };
+  const selectedConfirmed = selectedActivity.interviews.filter((person) => person.confirmed).length;
 
   return (
     <div className="analytics-dashboard">
@@ -1423,49 +1504,66 @@ function AnalyticsDashboard({ reports }: { reports: PublishedReport[] }) {
         </div>
       </section>
 
-      <section className="panel analytics-daily-panel">
-        <div className="panel-head analytics-daily-head">
+      <section className="panel analytics-calendar-panel">
+        <div className="panel-head analytics-calendar-head">
           <div>
-            <p className="eyebrow">Daily interview report</p>
-            <h2>Scheduled and confirmed interviews by day</h2>
-            <p>Unique applicants from Sourcing &amp; Hiring, grouped by the Scheduled Interview date in the selected reporting window.</p>
+            <p className="eyebrow">Daily staffing calendar</p>
+            <h2>Interviews, orientation and training</h2>
+            <p>Choose a date to see the people scheduled or completed on that day.</p>
           </div>
-          <div className="analytics-daily-legend" aria-label="Chart legend">
-            <span><i className="scheduled" /> Scheduled interviews</span>
-            <span><i className="confirmed" /> Confirmed</span>
-          </div>
+          <label className="analytics-calendar-date-picker"><span>Choose date</span><input type="date" value={activeActivityDate} onChange={(event) => { setSelectedActivityDate(event.target.value); setSelectedCalendarMonth(event.target.value.slice(0, 7)); }} /></label>
         </div>
 
-        <div className="analytics-daily-summary">
-          <article><span>Scheduled interviews</span><strong>{scheduledInterviewTotal}</strong></article>
-          <article><span>Confirmed</span><strong>{confirmedInterviewTotal}</strong></article>
-          <article><span>Confirmation rate</span><strong>{dailyConfirmationRate}%</strong></article>
-          <article><span>Interview days</span><strong>{dailyInterviews.length}</strong></article>
-        </div>
-
-        {dailyInterviews.length ? (
-          <div className="analytics-daily-chart" role="img" aria-label={`${scheduledInterviewTotal} scheduled interviews and ${confirmedInterviewTotal} confirmed interviews by day`}>
-            {dailyInterviews.map((day) => (
-              <div className="analytics-daily-row" key={day.date}>
-                <div className="analytics-daily-date"><strong>{displayDate(day.date)}</strong><span>{day.confirmed} of {day.scheduled} confirmed</span></div>
-                <div className="analytics-daily-bars">
-                  <div className="analytics-daily-bar-line">
-                    <span>Scheduled</span>
-                    <div className="analytics-daily-track"><i className="scheduled" style={{ width: `${(day.scheduled / dailyInterviewMaximum) * 100}%` }} /></div>
-                    <strong>{day.scheduled}</strong>
-                  </div>
-                  <div className="analytics-daily-bar-line">
-                    <span>Confirmed</span>
-                    <div className="analytics-daily-track"><i className="confirmed" style={{ width: `${(day.confirmed / dailyInterviewMaximum) * 100}%` }} /></div>
-                    <strong>{day.confirmed}</strong>
-                  </div>
-                </div>
-              </div>
-            ))}
+        <div className="analytics-calendar-layout">
+          <div className="analytics-calendar">
+            <div className="analytics-calendar-toolbar">
+              <button type="button" aria-label="Previous month" onClick={() => setSelectedCalendarMonth(shiftCalendarMonth(visibleCalendarMonth, -1))}>←</button>
+              <strong>{calendarMonthLabel(visibleCalendarMonth)}</strong>
+              <button type="button" aria-label="Next month" onClick={() => setSelectedCalendarMonth(shiftCalendarMonth(visibleCalendarMonth, 1))}>→</button>
+            </div>
+            <div className="analytics-calendar-weekdays" aria-hidden="true">{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <span key={day}>{day}</span>)}</div>
+            <div className="analytics-calendar-grid">
+              {calendarDates.map((date, index) => {
+                if (!date) return <span className="analytics-calendar-blank" key={`blank-${index}`} />;
+                const activity = activityByDate.get(date);
+                const total = (activity?.interviews.length ?? 0) + (activity?.orientations.length ?? 0) + (activity?.training.length ?? 0);
+                return (
+                  <button className={`analytics-calendar-day ${date === activeActivityDate ? "selected" : ""} ${total ? "has-activity" : ""}`} type="button" key={date} aria-label={`${displayDate(date)}${total ? `, ${total} activities` : ", no activities"}`} onClick={() => setSelectedActivityDate(date)}>
+                    <strong>{Number(date.slice(-2))}</strong>
+                    <span className="analytics-calendar-badges">
+                      {activity?.interviews.length ? <i className="interview">I {activity.interviews.length}</i> : null}
+                      {activity?.orientations.length ? <i className="orientation">O {activity.orientations.length}</i> : null}
+                      {activity?.training.length ? <i className="training">T {activity.training.length}</i> : null}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="analytics-calendar-legend"><span><i className="interview" /> Interviews</span><span><i className="orientation" /> Orientation completed</span><span><i className="training" /> Day 1 training</span></div>
           </div>
-        ) : (
-          <EmptyState title="No scheduled interview dates in this range" copy="Add a date to the Scheduled Interview column in a published Sourcing & Hiring report to populate this daily view." />
-        )}
+
+          <aside className="analytics-calendar-details">
+            <div className="analytics-calendar-details-head"><div><p className="eyebrow">Selected day</p><h3>{displayDate(activeActivityDate)}</h3></div><span className="pill">{selectedActivity.interviews.length + selectedActivity.orientations.length + selectedActivity.training.length} activities</span></div>
+            <div className="analytics-day-summary">
+              <span><strong>{selectedActivity.interviews.length}</strong> interviews</span>
+              <span><strong>{selectedConfirmed}</strong> confirmed</span>
+              <span><strong>{selectedActivity.orientations.length}</strong> orientation completed</span>
+              <span><strong>{selectedActivity.training.length}</strong> Day 1 training</span>
+            </div>
+            <div className="analytics-day-lists">
+              {[
+                { key: "interviews", label: "Scheduled interviews", people: selectedActivity.interviews, tone: "interview" },
+                { key: "orientations", label: "Orientation completed", people: selectedActivity.orientations, tone: "orientation" },
+                { key: "training", label: "Day 1 training", people: selectedActivity.training, tone: "training" },
+              ].map((group) => (
+                <section className="analytics-day-list" key={group.key}>
+                  <div className="analytics-day-list-head"><span><i className={group.tone} />{group.label}</span><strong>{group.people.length}</strong></div>
+                  {group.people.length ? <ul>{group.people.map((person) => <li key={person.id}><span className="person-avatar">{initials(person.name)}</span><div><strong>{person.name}</strong><small>{person.detail}</small></div>{group.key === "interviews" && person.confirmed ? <em>Confirmed</em> : null}</li>)}</ul> : <p>No drivers for this date.</p>}
+                </section>
+              ))}
+            </div>
+          </aside>
+        </div>
       </section>
 
       {!hasAnalytics && <section className="panel"><EmptyState title="No analytics data in this range" copy="Choose a wider date range or publish Sourcing, Orientation, or Training reports to populate the funnel." /></section>}
