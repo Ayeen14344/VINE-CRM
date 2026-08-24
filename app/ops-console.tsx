@@ -379,6 +379,20 @@ function shiftCalendarMonth(month: string, offset: number) {
   return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}`;
 }
 
+function shiftCalendarDate(date: string, offset: number) {
+  const match = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return date;
+  const shifted = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + offset);
+  return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, "0")}-${String(shifted.getDate()).padStart(2, "0")}`;
+}
+
+function calendarMonthEnd(month: string) {
+  const match = month.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return "";
+  const end = new Date(Number(match[1]), Number(match[2]), 0);
+  return `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`;
+}
+
 function calendarMonthDates(month: string) {
   const match = month.match(/^(\d{4})-(\d{2})$/);
   if (!match) return [] as (string | null)[];
@@ -1464,17 +1478,61 @@ function AnalyticsDashboard({ reports, hasTimeAccess = false }: { reports: Publi
     training: [],
   };
   const selectedConfirmed = selectedActivity.interviews.filter((person) => person.confirmed).length;
+  const timeReports = useMemo(() => reportsForPage(reports, "time"), [reports]);
+  const timeReportDates = useMemo(() => reportDates(timeReports), [timeReports]);
+  const earliestTimeReportDate = timeReportDates[timeReportDates.length - 1] ?? "";
+  const latestTimeReportDate = timeReportDates[0] ?? "";
+  const [commentPeriod, setCommentPeriod] = useState<"weekly" | "monthly" | "custom">("weekly");
+  const [commentWeekEnding, setCommentWeekEnding] = useState("");
+  const [commentMonth, setCommentMonth] = useState("");
+  const [commentCustomStart, setCommentCustomStart] = useState("");
+  const [commentCustomEnd, setCommentCustomEnd] = useState("");
+  const [selectedCommentKey, setSelectedCommentKey] = useState("all");
+  const effectiveCommentWeekEnd = commentWeekEnding || latestTimeReportDate;
+  const effectiveCommentMonth = commentMonth || latestTimeReportDate.slice(0, 7);
+  const effectiveCommentCustomStart = commentCustomStart || earliestTimeReportDate;
+  const effectiveCommentCustomEnd = commentCustomEnd || latestTimeReportDate;
+  const commentRangeStart = commentPeriod === "weekly"
+    ? (effectiveCommentWeekEnd ? shiftCalendarDate(effectiveCommentWeekEnd, -6) : "")
+    : commentPeriod === "monthly"
+      ? (effectiveCommentMonth ? `${effectiveCommentMonth}-01` : "")
+      : effectiveCommentCustomStart;
+  const commentRangeEnd = commentPeriod === "weekly"
+    ? effectiveCommentWeekEnd
+    : commentPeriod === "monthly"
+      ? calendarMonthEnd(effectiveCommentMonth)
+      : effectiveCommentCustomEnd;
+  const commentRangeReports = useMemo(() => timeReports.filter((report) =>
+    (!commentRangeStart || report.report_date >= commentRangeStart)
+    && (!commentRangeEnd || report.report_date <= commentRangeEnd),
+  ), [commentRangeEnd, commentRangeStart, timeReports]);
+  const commentOptions = useMemo(() => {
+    const options = new Map<string, string>();
+    commentRangeReports.forEach((report) => {
+      mergeReportRows(report.report_rows).forEach((row) => {
+        const comment = String(row.data.comments ?? "").replace(/\s+/g, " ").trim();
+        if (!comment || /^(?:-|—|n\/?a|none|no comment)$/i.test(comment)) return;
+        const key = comment.toLowerCase();
+        if (!options.has(key)) options.set(key, comment);
+      });
+    });
+    return Array.from(options, ([key, label]) => ({ key, label })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [commentRangeReports]);
+  const activeCommentKey = selectedCommentKey === "all" || commentOptions.some((option) => option.key === selectedCommentKey)
+    ? selectedCommentKey
+    : "all";
   const timeCommentGroups = useMemo(() => {
     type CommentPerson = CalendarPerson & { reportDate: string };
     type CommentGroup = { comment: string; people: Map<string, CommentPerson> };
     const grouped = new Map<string, CommentGroup>();
 
-    reportsForPage(rangeReports, "time").forEach((report) => {
+    commentRangeReports.forEach((report) => {
       mergeReportRows(report.report_rows).forEach((row) => {
         const comment = String(row.data.comments ?? "").replace(/\s+/g, " ").trim();
         if (!comment || /^(?:-|—|n\/?a|none|no comment)$/i.test(comment)) return;
 
         const groupKey = comment.toLowerCase();
+        if (activeCommentKey !== "all" && groupKey !== activeCommentKey) return;
         const group = grouped.get(groupKey) ?? { comment, people: new Map<string, CommentPerson>() };
         const person = calendarPerson(row);
         const current = group.people.get(person.id);
@@ -1491,7 +1549,7 @@ function AnalyticsDashboard({ reports, hasTimeAccess = false }: { reports: Publi
         people: Array.from(group.people.values()).sort((a, b) => a.name.localeCompare(b.name)),
       }))
       .sort((a, b) => b.people.length - a.people.length || a.comment.localeCompare(b.comment));
-  }, [rangeReports]);
+  }, [activeCommentKey, commentRangeReports]);
   const commentedPeopleTotal = new Set(timeCommentGroups.flatMap((group) => group.people.map((person) => person.id))).size;
 
   return (
@@ -1601,16 +1659,59 @@ function AnalyticsDashboard({ reports, hasTimeAccess = false }: { reports: Publi
             <div>
               <p className="eyebrow">Time &amp; Attendance insights</p>
               <h2>Employees grouped by matching comments</h2>
-              <p>Names are grouped from the Vertical 4 Comments column across the selected analytics reporting window.</p>
+              <p>Choose a reporting period and a Vertical 4 comment to focus the employee list.</p>
             </div>
             <div className="analytics-comment-summary">
+              <span className="analytics-comment-window"><strong>{commentRangeStart && commentRangeEnd ? `${displayDate(commentRangeStart)} – ${displayDate(commentRangeEnd)}` : "No dates"}</strong> reporting window</span>
               <span><strong>{timeCommentGroups.length}</strong> comment group{timeCommentGroups.length === 1 ? "" : "s"}</span>
               <span><strong>{commentedPeopleTotal}</strong> employee{commentedPeopleTotal === 1 ? "" : "s"}</span>
             </div>
           </div>
 
+          <div className="analytics-comment-filterbar">
+            <label>
+              <span>Reporting period</span>
+              <select value={commentPeriod} disabled={!timeReportDates.length} onChange={(event) => setCommentPeriod(event.target.value as "weekly" | "monthly" | "custom")}>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="custom">Custom date range</option>
+              </select>
+            </label>
+            {commentPeriod === "weekly" && (
+              <label>
+                <span>Week ending</span>
+                <input type="date" value={effectiveCommentWeekEnd} min={earliestTimeReportDate} max={latestTimeReportDate} disabled={!timeReportDates.length} onChange={(event) => setCommentWeekEnding(event.target.value)} />
+              </label>
+            )}
+            {commentPeriod === "monthly" && (
+              <label>
+                <span>Month</span>
+                <input type="month" value={effectiveCommentMonth} min={earliestTimeReportDate.slice(0, 7)} max={latestTimeReportDate.slice(0, 7)} disabled={!timeReportDates.length} onChange={(event) => setCommentMonth(event.target.value)} />
+              </label>
+            )}
+            {commentPeriod === "custom" && (
+              <>
+                <label>
+                  <span>From</span>
+                  <input type="date" value={effectiveCommentCustomStart} min={earliestTimeReportDate} max={effectiveCommentCustomEnd || latestTimeReportDate} disabled={!timeReportDates.length} onChange={(event) => setCommentCustomStart(event.target.value)} />
+                </label>
+                <label>
+                  <span>To</span>
+                  <input type="date" value={effectiveCommentCustomEnd} min={effectiveCommentCustomStart || earliestTimeReportDate} max={latestTimeReportDate} disabled={!timeReportDates.length} onChange={(event) => setCommentCustomEnd(event.target.value)} />
+                </label>
+              </>
+            )}
+            <label className="analytics-comment-picker">
+              <span>Comment</span>
+              <select value={activeCommentKey} disabled={!commentOptions.length} onChange={(event) => setSelectedCommentKey(event.target.value)}>
+                <option value="all">All comments</option>
+                {commentOptions.map((option) => <option value={option.key} key={option.key}>{option.label}</option>)}
+              </select>
+            </label>
+          </div>
+
           {timeCommentGroups.length ? (
-            <div className="analytics-comment-grid">
+            <div className={`analytics-comment-grid ${activeCommentKey !== "all" ? "single" : ""}`}>
               {timeCommentGroups.map((group, index) => (
                 <article className={`analytics-comment-card analytics-comment-card-${index % 4}`} key={group.comment.toLowerCase()}>
                   <div className="analytics-comment-card-head">
@@ -1631,7 +1732,7 @@ function AnalyticsDashboard({ reports, hasTimeAccess = false }: { reports: Publi
               ))}
             </div>
           ) : (
-            <EmptyState title="No Vertical 4 comments in this range" copy="Comments entered in published Time & Attendance reports will automatically appear here, grouped with the matching employee names." />
+            <EmptyState title="No matching Vertical 4 comments" copy="Choose another reporting period or comment. Published Time & Attendance comments will appear here automatically." />
           )}
         </section>
       )}
