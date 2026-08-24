@@ -1047,7 +1047,7 @@ export function OpsConsole() {
                 </div>
               </div>}
               {page === "overview" && <Overview onOpen={selectPage} reports={visiblePublishedReports} historyReports={publishedReports} selectedDate={selectedClientReportDate} allowedVerticalIds={enabledVerticalIds(selectedClient)} />}
-              {page === "analytics" && <AnalyticsDashboard reports={allowedPublishedReports} />}
+              {page === "analytics" && <AnalyticsDashboard reports={allowedPublishedReports} hasTimeAccess={Boolean(selectedClient && enabledVerticalIds(selectedClient).includes(timeAttendanceVerticalId))} />}
               {page === "vault" && profile && selectedClient && <CredentialVault clients={clients} client={selectedClient} role="client" profile={profile} onMessage={setToast} />}
               {page === "tasks" && profile && selectedClient && <ProjectBoard clients={clients} client={selectedClient} role="client" profile={profile} onMessage={setToast} />}
               {(page === "recruiting" || page === "orientation" || page === "training") && <VerticalReport page={page} reports={visiblePublishedReports} journeyReports={allowedPublishedReports} onExport={exportDashboard} />}
@@ -1352,7 +1352,7 @@ function TimeAttendance({ reports, journeyReports, verdicts, onVerdict }: { repo
   );
 }
 
-function AnalyticsDashboard({ reports }: { reports: PublishedReport[] }) {
+function AnalyticsDashboard({ reports, hasTimeAccess = false }: { reports: PublishedReport[]; hasTimeAccess?: boolean }) {
   const availableDates = useMemo(() => reportDates(reports), [reports]);
   const earliestDate = availableDates[availableDates.length - 1] ?? "";
   const latestDate = availableDates[0] ?? "";
@@ -1464,6 +1464,35 @@ function AnalyticsDashboard({ reports }: { reports: PublishedReport[] }) {
     training: [],
   };
   const selectedConfirmed = selectedActivity.interviews.filter((person) => person.confirmed).length;
+  const timeCommentGroups = useMemo(() => {
+    type CommentPerson = CalendarPerson & { reportDate: string };
+    type CommentGroup = { comment: string; people: Map<string, CommentPerson> };
+    const grouped = new Map<string, CommentGroup>();
+
+    reportsForPage(rangeReports, "time").forEach((report) => {
+      mergeReportRows(report.report_rows).forEach((row) => {
+        const comment = String(row.data.comments ?? "").replace(/\s+/g, " ").trim();
+        if (!comment || /^(?:-|—|n\/?a|none|no comment)$/i.test(comment)) return;
+
+        const groupKey = comment.toLowerCase();
+        const group = grouped.get(groupKey) ?? { comment, people: new Map<string, CommentPerson>() };
+        const person = calendarPerson(row);
+        const current = group.people.get(person.id);
+        if (!current || report.report_date >= current.reportDate) {
+          group.people.set(person.id, { ...person, reportDate: report.report_date });
+        }
+        grouped.set(groupKey, group);
+      });
+    });
+
+    return Array.from(grouped.values())
+      .map((group) => ({
+        comment: group.comment,
+        people: Array.from(group.people.values()).sort((a, b) => a.name.localeCompare(b.name)),
+      }))
+      .sort((a, b) => b.people.length - a.people.length || a.comment.localeCompare(b.comment));
+  }, [rangeReports]);
+  const commentedPeopleTotal = new Set(timeCommentGroups.flatMap((group) => group.people.map((person) => person.id))).size;
 
   return (
     <div className="analytics-dashboard">
@@ -1565,6 +1594,47 @@ function AnalyticsDashboard({ reports }: { reports: PublishedReport[] }) {
           </aside>
         </div>
       </section>
+
+      {hasTimeAccess && (
+        <section className="panel analytics-comment-report">
+          <div className="panel-head analytics-comment-head">
+            <div>
+              <p className="eyebrow">Time &amp; Attendance insights</p>
+              <h2>Employees grouped by matching comments</h2>
+              <p>Names are grouped from the Vertical 4 Comments column across the selected analytics reporting window.</p>
+            </div>
+            <div className="analytics-comment-summary">
+              <span><strong>{timeCommentGroups.length}</strong> comment group{timeCommentGroups.length === 1 ? "" : "s"}</span>
+              <span><strong>{commentedPeopleTotal}</strong> employee{commentedPeopleTotal === 1 ? "" : "s"}</span>
+            </div>
+          </div>
+
+          {timeCommentGroups.length ? (
+            <div className="analytics-comment-grid">
+              {timeCommentGroups.map((group, index) => (
+                <article className={`analytics-comment-card analytics-comment-card-${index % 4}`} key={group.comment.toLowerCase()}>
+                  <div className="analytics-comment-card-head">
+                    <span className="analytics-comment-mark">CM</span>
+                    <div><p>Shared comment</p><h3>{group.comment}</h3></div>
+                    <strong>{group.people.length}</strong>
+                  </div>
+                  <ul>
+                    {group.people.map((person) => (
+                      <li key={person.id}>
+                        <span className="person-avatar">{initials(person.name)}</span>
+                        <div><strong>{person.name}</strong><small>{person.detail}</small></div>
+                        <time dateTime={person.reportDate}>{displayDate(person.reportDate)}</time>
+                      </li>
+                    ))}
+                  </ul>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <EmptyState title="No Vertical 4 comments in this range" copy="Comments entered in published Time & Attendance reports will automatically appear here, grouped with the matching employee names." />
+          )}
+        </section>
+      )}
 
       {!hasAnalytics && <section className="panel"><EmptyState title="No analytics data in this range" copy="Choose a wider date range or publish Sourcing, Orientation, or Training reports to populate the funnel." /></section>}
 
@@ -1996,7 +2066,7 @@ function AdminClientView({ clients, profile, onMessage, readOnly = false }: { cl
           ) : (
             <>
               {clientPage === "overview" && <Overview onOpen={setClientPage} reports={visibleReports} historyReports={reports} selectedDate={selectedReportDate} allowedVerticalIds={visibleVerticalIds} />}
-              {clientPage === "analytics" && <AnalyticsDashboard reports={allowedReports} />}
+              {clientPage === "analytics" && <AnalyticsDashboard reports={allowedReports} hasTimeAccess={visibleVerticalIds.includes(timeAttendanceVerticalId)} />}
               {!readOnly && clientPage === "vault" && <CredentialVault clients={clients} client={selectedClient} role="client" profile={profile} onMessage={onMessage} />}
               {!readOnly && clientPage === "tasks" && <ProjectBoard clients={clients} client={selectedClient} role="client" profile={profile} onMessage={onMessage} />}
               {(clientPage === "recruiting" || clientPage === "orientation" || clientPage === "training") && (
