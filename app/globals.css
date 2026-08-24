@@ -5847,6 +5847,16 @@ textarea:focus-visible {
   margin-top: 6px;
 }
 
+.analytics-comment-head-actions {
+  display: grid;
+  justify-items: end;
+  gap: 9px;
+}
+
+.analytics-comment-head-actions .export-select {
+  min-width: 190px;
+}
+
 .analytics-comment-summary {
   display: flex;
   gap: 8px;
@@ -6014,6 +6024,16 @@ textarea:focus-visible {
   max-height: 190px;
   overflow-y: auto;
   list-style: none;
+}
+
+.analytics-comment-report.exporting .analytics-comment-card ul {
+  max-height: none;
+  overflow: visible;
+}
+
+.analytics-comment-report.exporting .analytics-comment-filterbar,
+.analytics-comment-report.exporting .analytics-comment-head-actions > .export-select {
+  display: none;
 }
 
 .analytics-comment-card li {
@@ -6338,6 +6358,14 @@ textarea:focus-visible {
   .analytics-comment-head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .analytics-comment-head-actions {
+    justify-items: stretch;
+  }
+
+  .analytics-comment-head-actions .export-select {
+    width: 100%;
   }
 
   .analytics-comment-summary {

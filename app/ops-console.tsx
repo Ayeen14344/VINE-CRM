@@ -1144,13 +1144,23 @@ function LoginBrandPanel() {
   );
 }
 
-function ExportControl({ onExport }: { onExport: (format: ExportFormat) => void }) {
+function ExportControl({
+  onExport,
+  label = "Export report",
+  ariaLabel = "Export report",
+  disabled = false,
+}: {
+  onExport: (format: ExportFormat) => void;
+  label?: string;
+  ariaLabel?: string;
+  disabled?: boolean;
+}) {
   return (
-    <select className="export-select" defaultValue="" onChange={(event) => {
+    <select className="export-select" defaultValue="" disabled={disabled} onChange={(event) => {
       if (event.target.value) onExport(event.target.value as "csv" | "xlsx" | "pdf" | "png" | "jpeg");
       event.target.value = "";
-    }} aria-label="Export dashboard">
-      <option value="" disabled>Export report</option>
+    }} aria-label={ariaLabel}>
+      <option value="" disabled>{label}</option>
       <option value="csv">CSV</option>
       <option value="xlsx">XLSX</option>
       <option value="pdf">PDF</option>
@@ -1551,6 +1561,80 @@ function AnalyticsDashboard({ reports, hasTimeAccess = false }: { reports: Publi
       .sort((a, b) => b.people.length - a.people.length || a.comment.localeCompare(b.comment));
   }, [activeCommentKey, commentRangeReports]);
   const commentedPeopleTotal = new Set(timeCommentGroups.flatMap((group) => group.people.map((person) => person.id))).size;
+  const selectedCommentLabel = activeCommentKey === "all"
+    ? "All comments"
+    : commentOptions.find((option) => option.key === activeCommentKey)?.label ?? "Selected comment";
+
+  async function exportCommentReport(format: ExportFormat) {
+    if (!timeCommentGroups.length) return;
+    const rows = [
+      ["Comment", "Employee", "Employee detail", "Report date", "Period start", "Period end"],
+      ...timeCommentGroups.flatMap((group) => group.people.map((person) => [
+        group.comment,
+        person.name,
+        person.detail,
+        person.reportDate,
+        commentRangeStart,
+        commentRangeEnd,
+      ])),
+    ];
+    const safeComment = selectedCommentLabel.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").slice(0, 45) || "comments";
+    const basename = `VINE-Pulse-Vertical-4-${safeComment}-${commentRangeStart || "start"}-to-${commentRangeEnd || "end"}`;
+
+    if (format === "csv") {
+      const csv = rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\r\n");
+      downloadBlob(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }), `${basename}.csv`);
+      return;
+    }
+
+    if (format === "xlsx") {
+      const XLSX = await import("xlsx");
+      const book = XLSX.utils.book_new();
+      const sheet = XLSX.utils.aoa_to_sheet(rows);
+      sheet["!cols"] = [{ wch: 34 }, { wch: 25 }, { wch: 30 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
+      XLSX.utils.book_append_sheet(book, sheet, "Comment Report");
+      XLSX.writeFile(book, `${basename}.xlsx`);
+      return;
+    }
+
+    if (format === "pdf") {
+      const [{ jsPDF }, autoTableModule] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
+      const doc = new jsPDF({ orientation: "landscape" });
+      doc.setFontSize(18);
+      doc.setTextColor(18, 54, 61);
+      doc.text("VINE Pulse | Time & Attendance Comments", 14, 17);
+      doc.setFontSize(9);
+      doc.setTextColor(0, 140, 99);
+      doc.text(`${selectedCommentLabel} | ${displayDate(commentRangeStart)} - ${displayDate(commentRangeEnd)}`, 14, 24);
+      autoTableModule.default(doc, {
+        head: [rows[0]],
+        body: rows.slice(1),
+        startY: 30,
+        theme: "striped",
+        headStyles: { fillColor: [0, 140, 99] },
+        styles: { fontSize: 8, cellPadding: 2.5 },
+      });
+      doc.save(`${basename}.pdf`);
+      return;
+    }
+
+    const target = document.querySelector<HTMLElement>("[data-comment-export-region]");
+    if (!target) return;
+    target.classList.add("exporting");
+    try {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const image = await import("html-to-image");
+      const dataUrl = format === "png"
+        ? await image.toPng(target, { backgroundColor: "#ffffff", pixelRatio: 2 })
+        : await image.toJpeg(target, { backgroundColor: "#ffffff", pixelRatio: 2, quality: 0.94 });
+      const anchor = document.createElement("a");
+      anchor.download = `${basename}.${format}`;
+      anchor.href = dataUrl;
+      anchor.click();
+    } finally {
+      target.classList.remove("exporting");
+    }
+  }
 
   return (
     <div className="analytics-dashboard">
@@ -1654,17 +1738,25 @@ function AnalyticsDashboard({ reports, hasTimeAccess = false }: { reports: Publi
       </section>
 
       {hasTimeAccess && (
-        <section className="panel analytics-comment-report">
+        <section className="panel analytics-comment-report" data-comment-export-region>
           <div className="panel-head analytics-comment-head">
             <div>
               <p className="eyebrow">Time &amp; Attendance insights</p>
               <h2>Employees grouped by matching comments</h2>
               <p>Choose a reporting period and a Vertical 4 comment to focus the employee list.</p>
             </div>
-            <div className="analytics-comment-summary">
-              <span className="analytics-comment-window"><strong>{commentRangeStart && commentRangeEnd ? `${displayDate(commentRangeStart)} – ${displayDate(commentRangeEnd)}` : "No dates"}</strong> reporting window</span>
-              <span><strong>{timeCommentGroups.length}</strong> comment group{timeCommentGroups.length === 1 ? "" : "s"}</span>
-              <span><strong>{commentedPeopleTotal}</strong> employee{commentedPeopleTotal === 1 ? "" : "s"}</span>
+            <div className="analytics-comment-head-actions">
+              <ExportControl
+                label="Download selected report"
+                ariaLabel="Download the selected comment report"
+                disabled={!timeCommentGroups.length}
+                onExport={(format) => { void exportCommentReport(format); }}
+              />
+              <div className="analytics-comment-summary">
+                <span className="analytics-comment-window"><strong>{commentRangeStart && commentRangeEnd ? `${displayDate(commentRangeStart)} – ${displayDate(commentRangeEnd)}` : "No dates"}</strong> reporting window</span>
+                <span><strong>{timeCommentGroups.length}</strong> comment group{timeCommentGroups.length === 1 ? "" : "s"}</span>
+                <span><strong>{commentedPeopleTotal}</strong> employee{commentedPeopleTotal === 1 ? "" : "s"}</span>
+              </div>
             </div>
           </div>
 
