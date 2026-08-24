@@ -5873,11 +5873,79 @@ textarea:focus-visible {
   letter-spacing: -.035em;
 }
 
+.analytics-comment-summary .analytics-comment-window {
+  min-width: 190px;
+}
+
+.analytics-comment-summary .analytics-comment-window strong {
+  font-size: 10px;
+  letter-spacing: -.015em;
+  white-space: nowrap;
+}
+
+.analytics-comment-filterbar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 11px;
+  align-items: end;
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid rgba(23, 90, 101, .1);
+  border-radius: 13px;
+  background: linear-gradient(135deg, rgba(240, 249, 247, .94), rgba(247, 251, 251, .9));
+}
+
+.analytics-comment-filterbar label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.analytics-comment-filterbar label > span {
+  color: #53706e;
+  font-size: 7px;
+  font-weight: 850;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+
+.analytics-comment-filterbar select,
+.analytics-comment-filterbar input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid rgba(22, 77, 82, .14);
+  border-radius: 9px;
+  padding: 9px 11px;
+  color: #173d42;
+  background: rgba(255, 255, 255, .96);
+  font: inherit;
+  font-size: 9px;
+  font-weight: 720;
+}
+
+.analytics-comment-filterbar select:focus,
+.analytics-comment-filterbar input:focus {
+  outline: 2px solid rgba(0, 166, 120, .2);
+  border-color: #00a678;
+}
+
+.analytics-comment-filterbar select:disabled,
+.analytics-comment-filterbar input:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
 .analytics-comment-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 13px;
   margin-top: 20px;
+}
+
+.analytics-comment-grid.single {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 860px;
 }
 
 .analytics-comment-card {
@@ -5943,7 +6011,7 @@ textarea:focus-visible {
 
 .analytics-comment-card ul {
   display: grid;
-  max-height: 240px;
+  max-height: 190px;
   overflow-y: auto;
   list-style: none;
 }
@@ -6274,6 +6342,10 @@ textarea:focus-visible {
 
   .analytics-comment-summary {
     flex-wrap: wrap;
+  }
+
+  .analytics-comment-filterbar {
+    grid-template-columns: 1fr;
   }
 
   .analytics-comment-grid {
