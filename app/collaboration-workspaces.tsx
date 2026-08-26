@@ -146,6 +146,7 @@ export function CredentialVault(props: SharedWorkspaceProps) {
   const [editing, setEditing] = useState<VaultCredential | null>(null);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [passwordAction, setPasswordAction] = useState<{ id: string; type: "show" | "copy" } | null>(null);
   const [form, setForm] = useState({ serviceName: "", websiteUrl: "", username: "", password: "", notes: "" });
 
   const loadCredentials = useCallback(async () => {
@@ -207,22 +208,60 @@ export function CredentialVault(props: SharedWorkspaceProps) {
     }
   }
 
+  async function getCredentialPassword(id: string) {
+    const cachedPassword = revealed[id];
+    if (cachedPassword) return cachedPassword;
+
+    const result = await vaultRequest("POST", { action: "reveal", id, clientId: activeClientId });
+    const password = result.password ?? "";
+    if (!password) throw new Error("This credential does not have a password to reveal.");
+    return password;
+  }
+
   async function revealCredential(id: string) {
     if (revealed[id]) {
       setRevealed((current) => { const next = { ...current }; delete next[id]; return next; });
       return;
     }
+    setPasswordAction({ id, type: "show" });
     try {
-      const result = await vaultRequest("POST", { action: "reveal", id, clientId: activeClientId });
-      setRevealed((current) => ({ ...current, [id]: result.password ?? "" }));
+      const password = await getCredentialPassword(id);
+      setRevealed((current) => ({ ...current, [id]: password }));
     } catch (error) {
       props.onMessage(error instanceof Error ? error.message : "The password could not be revealed.");
+    } finally {
+      setPasswordAction(null);
     }
   }
 
   async function copyText(value: string, label: string) {
-    await navigator.clipboard.writeText(value);
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = value;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const copied = document.execCommand("copy");
+      textarea.remove();
+      if (!copied) throw new Error(`${label} could not be copied. Please use Show and copy it manually.`);
+    }
     props.onMessage(`${label} copied securely.`);
+  }
+
+  async function copyCredentialPassword(id: string) {
+    setPasswordAction({ id, type: "copy" });
+    try {
+      const password = await getCredentialPassword(id);
+      await copyText(password, "Password");
+    } catch (error) {
+      props.onMessage(error instanceof Error ? error.message : "The password could not be copied.");
+    } finally {
+      setPasswordAction(null);
+    }
   }
 
   async function deleteCredential(credential: VaultCredential) {
@@ -260,7 +299,7 @@ export function CredentialVault(props: SharedWorkspaceProps) {
         return <article className="panel vault-card" key={credential.id}>
           <div className="vault-card-head"><span className="vault-service-icon">{credential.service_name.slice(0, 2).toUpperCase()}</span><div><h3>{credential.service_name}</h3><p>Updated {formatWorkspaceDate(credential.updated_at)}</p></div><span className="vault-encrypted-pill">Encrypted</span></div>
           <div className="vault-field"><span>Username</span><div><code>{credential.username}</code><button type="button" onClick={() => copyText(credential.username, "Username")}>Copy</button></div></div>
-          <div className="vault-field"><span>Password</span><div><code>{password || "••••••••••••"}</code><button type="button" onClick={() => revealCredential(credential.id)}>{password ? "Hide" : "Show"}</button>{password && <button type="button" onClick={() => copyText(password, "Password")}>Copy</button>}</div></div>
+          <div className="vault-field"><span>Password</span><div><code>{password || "••••••••••••"}</code><button type="button" disabled={passwordAction?.id === credential.id} onClick={() => revealCredential(credential.id)}>{passwordAction?.id === credential.id && passwordAction.type === "show" ? "Loading…" : password ? "Hide" : "Show"}</button><button type="button" disabled={passwordAction?.id === credential.id} onClick={() => copyCredentialPassword(credential.id)}>{passwordAction?.id === credential.id && passwordAction.type === "copy" ? "Copying…" : "Copy"}</button></div></div>
           {credential.notes && <p className="vault-card-notes">{credential.notes}</p>}
           <div className="vault-card-actions">{url && <a className="secondary-btn" href={url} target="_blank" rel="noreferrer">Open login</a>}<button className="secondary-btn" type="button" onClick={() => openEdit(credential)}>Edit</button><button className="danger-link" type="button" onClick={() => deleteCredential(credential)}>Delete</button></div>
         </article>;
